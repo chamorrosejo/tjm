@@ -198,7 +198,7 @@ def mostrar_pantalla_resumen():
                 col_data[0].markdown(f"**{i+1}**")
                 with col_data[1]:
                     st.markdown(f"**{cortina['diseno']}**")
-                    st.markdown(f"Dimensiones: {cortina['ancho']:.2f} mts x {cortina['alto']:.2f} mts")
+                    st.markdown(f"Dimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} mts x {cortina['alto']:.2f} mts")
                     st.markdown(f"Cantidad: 1 und")
                     partida_texto = "Sí" if cortina['partida'] == "SI" else "No"
                     st.markdown(f"Partida: {partida_texto}")
@@ -341,7 +341,7 @@ def generar_pdf(datos_cotizacion, cortinas_resumen):
         
         pdf.set_xy(25, y_before)
         partida_texto = "Sí" if cortina['partida'] == "SI" else "No"
-        nombre_texto = f"{cortina['diseno']}\nDimensiones: {cortina['ancho']:.2f} mts x {cortina['alto']:.2f} mts\nCantidad: 1 und\nPartida: {partida_texto}"
+        nombre_texto = f"{cortina['diseno']}\nDimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} mts x {cortina['alto']:.2f} mts\nCantidad: 1 und\nPartida: {partida_texto}"
         pdf.multi_cell(60, line_height, nombre_texto, 0, 'L')
         y_after_nombre = pdf.get_y()
 
