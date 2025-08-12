@@ -231,8 +231,8 @@ def mostrar_pantalla_resumen():
                 st.rerun()
 
     total_final = sum(c['total'] for c in st.session_state.cortinas_resumen)
-    subtotal = total_final / (1 + IVA_PERCENT)
-    iva = total_final - subtotal
+    iva = total_final * IVA_PERCENT
+    subtotal = total_final - iva
     
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
@@ -365,8 +365,8 @@ def generar_pdf(datos_cotizacion, cortinas_resumen):
         pdf.cell(30, row_height, f"${cortina['total']:,.2f}", 1, 1, 'R')
 
     total_final = sum(c['total'] for c in cortinas_resumen)
-    subtotal = total_final / (1 + IVA_PERCENT)
-    iva = total_final - subtotal
+    iva = total_final * IVA_PERCENT
+    subtotal = total_final - iva
     
     pdf.set_font('Arial', 'B', 10)
     pdf.cell(160, 8, 'Subtotal:', 0, 0, 'R')
@@ -451,8 +451,9 @@ def calcular_y_mostrar_cotizacion():
             "Insumo": nombre_mostrado, "Cantidad": f"{cantidad:.2f}", "Unidad": unidad,
             "P.V.P/Unit ($)": f"${pvp:,.2f}", "Precio ($)": f"${precio_total_insumo:,.2f}"
         })
-    total = subtotal * (1 + IVA_PERCENT)
-    iva = total - subtotal
+    total = subtotal
+    iva = total * IVA_PERCENT
+    subtotal = total - iva
     st.session_state.cortina_calculada = {
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
         "partida": st.session_state.partida,
