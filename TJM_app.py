@@ -199,7 +199,7 @@ def mostrar_pantalla_resumen():
                 with col_data[1]:
                     st.markdown(f"**{cortina['diseno']}**")
                     st.markdown(f"Dimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} mts x {cortina['alto']:.2f} mts")
-                    st.markdown(f"Cantidad: 1 und")
+                    st.markdown(f"Cantidad: {cortina['cantidad']} und")
                     partida_texto = "Sí" if cortina['partida'] == "SI" else "No"
                     st.markdown(f"Partida: {partida_texto}")
                 with col_data[2]:
@@ -256,6 +256,7 @@ def mostrar_pantalla_cotizador():
     st.subheader("1. Medidas y Opciones Finales")
     ancho = st.number_input("Ancho de la Ventana (m)", min_value=0.1, value=1.0, step=0.1, key="ancho")
     alto = st.number_input("Alto de la Cortina (m)", min_value=0.1, value=1.0, step=0.1, key="alto")
+    cantidad_cortinas = st.number_input("Cantidad (und)", min_value=1, value=1, step=1, key="cantidad")
     partida = st.radio("¿Cortina partida?", ("SI", "NO"), horizontal=True, key="partida")
     st.markdown("---")
     st.subheader("2. Selecciona el Diseño")
@@ -341,7 +342,7 @@ def generar_pdf(datos_cotizacion, cortinas_resumen):
         
         pdf.set_xy(25, y_before)
         partida_texto = "Sí" if cortina['partida'] == "SI" else "No"
-        nombre_texto = f"{cortina['diseno']}\nDimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} mts x {cortina['alto']:.2f} mts\nCantidad: 1 und\nPartida: {partida_texto}"
+        nombre_texto = f"{cortina['diseno']}\nDimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} mts x {cortina['alto']:.2f} mts\nCantidad: {cortina['cantidad']} und\nPartida: {partida_texto}"
         pdf.multi_cell(60, line_height, nombre_texto, 0, 'L')
         y_after_nombre = pdf.get_y()
 
@@ -385,6 +386,7 @@ def iniciar_edicion(index):
     st.session_state.ancho = cortina['ancho']
     st.session_state.alto = cortina['alto']
     st.session_state.partida = cortina['partida']
+    st.session_state.cantidad = cortina.get('cantidad', 1)
     st.session_state.diseno_sel = cortina['diseno']
     st.session_state.multiplicador = cortina['multiplicador']
     st.session_state.tipo_tela_sel = cortina['tela']['tipo']
@@ -413,6 +415,7 @@ def calcular_y_mostrar_cotizacion():
     ancho = st.session_state.ancho
     alto = st.session_state.alto
     multiplicador = st.session_state.multiplicador
+    cantidad = st.session_state.cantidad
     detalle_insumos = []
     subtotal = 0
     insumos_requeridos_diseno = BOM.get(diseno, [])
@@ -424,6 +427,7 @@ def calcular_y_mostrar_cotizacion():
     }
     for nombre_insumo in insumos_requeridos_diseno:
         cantidad = 0; pvp = 0; unidad = ''; nombre_mostrado = nombre_insumo
+    # cantidad base por cortina; luego multiplicar por número de cortinas
         if nombre_insumo in ["RODACHINES REATA BROCHES", "RODACHINES REATA ITALIANA", "UÑETA REATA ITALIANA"]:
             cantidad = -(-ancho // PASO_RODACHIN)
         elif nombre_insumo in ["ARGOLLA PLASTICA", "ARGOLLA METALICA"]:
@@ -432,6 +436,8 @@ def calcular_y_mostrar_cotizacion():
             cantidad = -(-(ancho * multiplicador) // DISTANCIA_BOTON)
         else:
             cantidad = ancho * multiplicador
+        # multiplicar por número de cortinas
+        cantidad = cantidad * cantidad
         if nombre_insumo == "TELA 1":
             pvp = st.session_state.pvp_tela
             unidad = "MT"
@@ -456,6 +462,7 @@ def calcular_y_mostrar_cotizacion():
     subtotal = total - iva
     st.session_state.cortina_calculada = {
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
+        "cantidad": cantidad,
         "partida": st.session_state.partida,
         "tela": {"tipo": st.session_state.tipo_tela_sel, "referencia": st.session_state.ref_tela_sel, "color": st.session_state.color_tela_sel},
         "insumos_seleccion": insumos_seleccion_filtrados,
@@ -487,4 +494,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
