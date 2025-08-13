@@ -415,7 +415,7 @@ def calcular_y_mostrar_cotizacion():
     ancho = st.session_state.ancho
     alto = st.session_state.alto
     multiplicador = st.session_state.multiplicador
-    cantidad = st.session_state.cantidad
+    num_cortinas = st.session_state.cantidad
     detalle_insumos = []
     subtotal = 0
     insumos_requeridos_diseno = BOM.get(diseno, [])
@@ -426,18 +426,18 @@ def calcular_y_mostrar_cotizacion():
         if insumo in st.session_state.insumos_seleccion
     }
     for nombre_insumo in insumos_requeridos_diseno:
-        cantidad = 0; pvp = 0; unidad = ''; nombre_mostrado = nombre_insumo
-    # cantidad base por cortina; luego multiplicar por número de cortinas
+        cantidad_insumo = 0; pvp = 0; unidad = ''; nombre_mostrado = nombre_insumo
         if nombre_insumo in ["RODACHINES REATA BROCHES", "RODACHINES REATA ITALIANA", "UÑETA REATA ITALIANA"]:
-            cantidad = -(-ancho // PASO_RODACHIN)
+            cantidad_insumo = -(-ancho // PASO_RODACHIN)
         elif nombre_insumo in ["ARGOLLA PLASTICA", "ARGOLLA METALICA"]:
-            cantidad = -(-(ancho * multiplicador) // DISTANCIA_OJALES)
+            cantidad_insumo = -(-(ancho * multiplicador) // DISTANCIA_OJALES)
         elif nombre_insumo == "BOTON":
-            cantidad = -(-(ancho * multiplicador) // DISTANCIA_BOTON)
+            cantidad_insumo = -(-(ancho * multiplicador) // DISTANCIA_BOTON)
         else:
-            cantidad = ancho * multiplicador
+            cantidad_insumo = ancho * multiplicador
         # multiplicar por número de cortinas
-        cantidad = cantidad * cantidad
+        cantidad_insumo_total = cantidad_insumo * num_cortinas
+
         if nombre_insumo == "TELA 1":
             pvp = st.session_state.pvp_tela
             unidad = "MT"
@@ -451,10 +451,10 @@ def calcular_y_mostrar_cotizacion():
             info = PRECIOS_MANO_DE_OBRA[nombre_insumo]
             pvp = info['pvp']
             unidad = info['unidad']
-        precio_total_insumo = cantidad * pvp
+        precio_total_insumo = cantidad_insumo_total * pvp
         subtotal += precio_total_insumo
         detalle_insumos.append({
-            "Insumo": nombre_mostrado, "Cantidad": f"{cantidad:.2f}", "Unidad": unidad,
+            "Insumo": nombre_mostrado, "Cantidad": f"{cantidad_insumo_total:.2f}", "Unidad": unidad,
             "P.V.P/Unit ($)": f"${pvp:,.2f}", "Precio ($)": f"${precio_total_insumo:,.2f}"
         })
     total = subtotal
@@ -462,7 +462,7 @@ def calcular_y_mostrar_cotizacion():
     subtotal = total - iva
     st.session_state.cortina_calculada = {
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
-        "cantidad": cantidad,
+        "cantidad": num_cortinas,
         "partida": st.session_state.partida,
         "tela": {"tipo": st.session_state.tipo_tela_sel, "referencia": st.session_state.ref_tela_sel, "color": st.session_state.color_tela_sel},
         "insumos_seleccion": insumos_seleccion_filtrados,
