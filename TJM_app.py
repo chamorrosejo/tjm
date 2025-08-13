@@ -3,6 +3,11 @@ import pandas as pd
 import os
 from fpdf import FPDF
 from datetime import datetime
+import math
+
+def ceil_to_even(x: float) -> int:
+    n = math.ceil(x)
+    return n if n % 2 == 0 else n + 1
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
@@ -430,9 +435,9 @@ def calcular_y_mostrar_cotizacion():
         if nombre_insumo in ["RODACHINES REATA BROCHES", "RODACHINES REATA ITALIANA", "UÑETA REATA ITALIANA"]:
             cantidad_insumo = -(-ancho // PASO_RODACHIN)
         elif nombre_insumo in ["ARGOLLA PLASTICA", "ARGOLLA METALICA"]:
-            cantidad_insumo = -(-(ancho * multiplicador) // DISTANCIA_OJALES)
+            cantidad_insumo = ceil_to_even((ancho * multiplicador) / DISTANCIA_OJALES)
         elif nombre_insumo == "BOTON":
-            cantidad_insumo = -(-(ancho * multiplicador) // DISTANCIA_BOTON)
+            cantidad_insumo = ceil_to_even((ancho * multiplicador) / DISTANCIA_BOTON)
         else:
             cantidad_insumo = ancho * multiplicador
         # multiplicar por número de cortinas
@@ -454,7 +459,7 @@ def calcular_y_mostrar_cotizacion():
         precio_total_insumo = cantidad_insumo_total * pvp
         subtotal += precio_total_insumo
         detalle_insumos.append({
-            "Insumo": nombre_mostrado, "Cantidad": f"{cantidad_insumo_total:.2f}", "Unidad": unidad,
+            "Insumo": nombre_mostrado, "Cantidad": (f"{int(cantidad_insumo_total)}" if unidad == "UND" else f"{cantidad_insumo_total:.2f}"), "Unidad": unidad,
             "P.V.P/Unit ($)": f"${pvp:,.2f}", "Precio ($)": f"${precio_total_insumo:,.2f}"
         })
     total = subtotal
