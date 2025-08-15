@@ -276,12 +276,11 @@ def pantalla_cotizador():
         colores = [x["color"] for x in CATALOGO_TELAS[tipo][ref]]
         color = st.selectbox(f"Color {prefix}", options=colores, key=color_key)
         info = next(x for x in CATALOGO_TELAS[tipo][ref] if x["color"] == color)
-        st.number_input(f"PVP/Metro TELA {prefix} ($)", value=info["pvp"], disabled=True, key=pvp_key)
+        st.session_state.setdefault(pvp_key, info["pvp"])
+        st.text_input(f"PVP/Metro TELA {prefix} ($)", value=f"${int(info['pvp']):,}", disabled=True)
 
-        # NUEVO: Modo de confección por tela
         st.radio(f"Modo de confección {prefix}", options=["Entera", "Partida", "Semipartida"], horizontal=True, key=modo_key)
 
-    # Ver si el BOM del diseño incluye TELA 2
     items_d = BOM_DICT.get(diseno_sel, [])
     usa_tela2 = any(i["Insumo"].strip().upper() == "TELA 2" for i in items_d)
 
@@ -300,8 +299,7 @@ def pantalla_cotizador():
     if st.session_state.get('cortina_calculada'):
         st.success("Cálculo realizado. Revisa los detalles a continuación.")
         df_detalle = pd.DataFrame(st.session_state.cortina_calculada['detalle_insumos'])
-        
-        # Formatear las columnas de precios con el signo de dólar y separador de miles
+
         df_detalle['P.V.P/Unit ($)'] = df_detalle['P.V.P/Unit ($)'].apply(lambda x: f"${int(x):,}")
         df_detalle['Precio ($)'] = df_detalle['Precio ($)'].apply(lambda x: f"${int(x):,}")
 
@@ -312,7 +310,6 @@ def pantalla_cotizador():
         c3.metric("Total Cortina", f"${int(st.session_state.cortina_calculada['total']):,}")
 
 def mostrar_insumos_bom(diseno_sel: str):
-    # Solo mostrar los que requieren selección
     items = [it for it in BOM_DICT.get(diseno_sel, []) if it["DependeDeSeleccion"] == "SI"]
     if not items:
         st.info("Este diseño no requiere insumos adicionales para seleccionar.")
@@ -332,7 +329,7 @@ def mostrar_insumos_bom(diseno_sel: str):
                 colores = sorted(list({opt['color'] for opt in cat['opciones'] if opt['ref'] == ref_sel}))
                 color_sel = st.selectbox(f"Color {nombre}", options=colores, key=color_key)
                 insumo_info = next(opt for opt in cat['opciones'] if opt['ref'] == ref_sel and opt['color'] == color_sel)
-                st.number_input(f"P.V.P {nombre} ({cat['unidad']})", value=insumo_info["pvp"], disabled=True, key=f"pvp_{nombre}")
+                st.text_input(f"P.V.P {nombre} ({cat['unidad']})", value=f"${int(insumo_info['pvp']):,}", disabled=True)
                 st.session_state.setdefault("insumos_seleccion", {})
                 st.session_state.insumos_seleccion[nombre] = {"ref": ref_sel, "color": color_sel, "pvp": insumo_info["pvp"], "unidad": cat["unidad"]}
             else:
