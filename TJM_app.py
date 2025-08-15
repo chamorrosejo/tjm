@@ -32,15 +32,18 @@ SCRIPT_DIR = os.path.dirname(__file__) if "__file__" in globals() else os.getcwd
 
 _default_designs = os.path.join(SCRIPT_DIR, "data", "disenos_cortina.xlsx")
 _default_bom     = os.path.join(SCRIPT_DIR, "data", "bom.xlsx")
-_default_cat     = os.path.join(SCRIPT_DIR, "data", "catalogo_insumos.xlsx")
+_default_cat_ins = os.path.join(SCRIPT_DIR, "data", "catalogo_insumos.xlsx")
+_default_cat_tel = os.path.join(SCRIPT_DIR, "data", "catalogo_telas.xlsx")  # NEW
 
 DESIGNS_XLSX_PATH = os.environ.get("DESIGNS_XLSX_PATH") or st.secrets.get("DESIGNS_XLSX_PATH", _default_designs)
 BOM_XLSX_PATH     = os.environ.get("BOM_XLSX_PATH")     or st.secrets.get("BOM_XLSX_PATH", _default_bom)
-CATALOG_XLSX_PATH = os.environ.get("CATALOG_XLSX_PATH") or st.secrets.get("CATALOG_XLSX_PATH", _default_cat)
+CATALOG_XLSX_PATH = os.environ.get("CATALOG_XLSX_PATH") or st.secrets.get("CATALOG_XLSX_PATH", _default_cat_ins)
+CATALOG_TELAS_XLSX_PATH = os.environ.get("CATALOG_TELAS_XLSX_PATH") or st.secrets.get("CATALOG_TELAS_XLSX_PATH", _default_cat_tel)  # NEW
 
 REQUIRED_DESIGNS_COLS = ["Diseño", "Tipo", "Multiplicador", "PVP M.O."]
 REQUIRED_BOM_COLS     = ["Diseño", "Insumo", "Unidad", "ReglaCantidad", "Parametro", "DependeDeSeleccion", "Observaciones"]
 REQUIRED_CAT_COLS     = ["Insumo", "Unidad", "Ref", "Color", "PVP"]
+REQUIRED_TELAS_COLS   = ["TipoTela", "Referencia", "Color", "PVP/Metro ($)"]  # matches provided template
 
 ALLOWED_RULES = {"MT_ANCHO_X_MULT", "UND_OJALES_PAR", "UND_BOTON_PAR", "FIJO"}
 
@@ -102,7 +105,6 @@ def load_bom_from_excel(path: str):
 
     bom_dict = {}
     for _, row in df.iterrows():
-        # Normalizar Parametro
         p_raw = row.get("Parametro", "")
         if pd.isna(p_raw) or (isinstance(p_raw, str) and p_raw.strip().lower() in ("", "nan", "none")):
             param_norm = ""
@@ -115,7 +117,7 @@ def load_bom_from_excel(path: str):
             "ReglaCantidad": str(row["ReglaCantidad"]).strip().upper(),
             "Parametro": param_norm,
             "DependeDeSeleccion": str(row["DependeDeSeleccion"]).strip().upper(),
-            "Observaciones": str(row["Observaciones"]) if not pd.isna(row["Observaciones"]) else "",
+            "Observaciones": "" if pd.isna(row.get("Observaciones", "")) else str(row.get("Observaciones", "")),
         }
         dis = str(row["Diseño"]).strip()
         bom_dict.setdefault(dis, []).append(item)
@@ -128,9 +130,8 @@ def load_catalog_from_excel(path: str):
     df = pd.read_excel(path, engine="openpyxl")
     faltantes = [c for c in REQUIRED_CAT_COLS if c not in df.columns]
     if faltantes:
-        st.error(f"El catálogo debe tener columnas: {REQUIRED_CAT_COLS}. Encontradas: {list(df.columns)}")
+        st.error(f"El catálogo de insumos debe tener columnas: {REQUIRED_CAT_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
-
     catalog = {}
     for _, row in df.iterrows():
         insumo = str(row["Insumo"]).strip()
@@ -144,8 +145,29 @@ def load_catalog_from_excel(path: str):
         catalog[insumo]["opciones"].append({"ref": ref, "color": color, "pvp": pvp})
     return catalog
 
+def load_telas_from_excel(path: str):
+    if not os.path.exists(path):
+        st.error(f"No se encontró el catálogo de TELAS en: {path}")
+        st.stop()
+    df = pd.read_excel(path, engine="openpyxl")
+    faltantes = [c for c in REQUIRED_TELAS_COLS if c not in df.columns]
+    if faltantes:
+        st.error(f"El catálogo de TELAS debe tener columnas: {REQUIRED_TELAS_COLS}. Encontradas: {list(df.columns)}")
+        st.stop()
+    # build nested dict TipoTela -> Referencia -> list of {color, pvp}
+    telas = {}
+    for _, row in df.iterrows():
+        tipo = str(row["TipoTela"]).strip()
+        ref  = str(row["Referencia"]).strip()
+        color= str(row["Color"]).strip()
+        pvp  = _safe_float(row["PVP/Metro ($)"], 0.0)
+        telas.setdefault(tipo, {})
+        telas[tipo].setdefault(ref, [])
+        telas[tipo][ref].append({"color": color, "pvp": pvp})
+    return telas
+
 # =======================
-# PDF (igual que antes)
+# PDF
 # =======================
 class PDF(FPDF):
     def header(self):
@@ -176,6 +198,7 @@ st.set_page_config(page_title="Megatex Cotizador", page_icon="Megatex.png", layo
 TABLA_DISENOS, TIPOS_CORTINA, PRECIOS_MANO_DE_OBRA, DISENOS_A_TIPOS, DF_DISENOS = load_designs_from_excel(DESIGNS_XLSX_PATH)
 BOM_DICT, DF_BOM = load_bom_from_excel(BOM_XLSX_PATH)
 CATALOGO_INSUMOS = load_catalog_from_excel(CATALOG_XLSX_PATH)
+CATALOGO_TELAS = load_telas_from_excel(CATALOG_TELAS_XLSX_PATH)  # NEW
 
 def init_state():
     if 'pagina_actual' not in st.session_state:
@@ -194,7 +217,8 @@ def sidebar():
         st.title("Megatex Cotizador")
         st.caption(f"Diseños: {DESIGNS_XLSX_PATH}")
         st.caption(f"BOM: {BOM_XLSX_PATH}")
-        st.caption(f"Catálogo: {CATALOG_XLSX_PATH}")
+        st.caption(f"Catálogo insumos: {CATALOG_XLSX_PATH}")
+        st.caption(f"Catálogo telas: {CATALOG_TELAS_XLSX_PATH}")
         if st.button("Recargar datos"):
             st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
         st.divider()
@@ -245,21 +269,6 @@ def pantalla_cotizador():
         color_key= f"color_tela_sel_{prefix}"
         pvp_key  = f"pvp_tela_{prefix}"
 
-        CATALOGO_TELAS = {
-            "Loneta": {
-                "NATALIA": [{"color": "MARFIL", "pvp": 38000}, {"color": "CAMEL", "pvp": 38000}, {"color": "PLATA", "pvp": 38000}],
-                "FINESTRA": [{"color": "BLANCO", "pvp": 24000}, {"color": "MARFIL", "pvp": 24000}, {"color": "CREMA", "pvp": 24000}, {"color": "LINO", "pvp": 24000}, {"color": "TAUPE", "pvp": 24000}, {"color": "ROSA", "pvp": 24000}, {"color": "PLATA", "pvp": 24000}, {"color": "GRIS", "pvp": 24000}, {"color": "INDIGO", "pvp": 24000}]
-            },
-            "Velo": {
-                "CALMA": [{"color": "MARFIL", "pvp": 44000}, {"color": "NUEZ", "pvp": 44000}, {"color": "CAMEL", "pvp": 44000}, {"color": "PLATA", "pvp": 44000}, {"color": "GRIS", "pvp": 44000}],
-                "LINK": [{"color": "BLANCO", "pvp": 26000}, {"color": "MARFIL", "pvp": 26000}, {"color": "SAHARA", "pvp": 26000}, {"color": "CAMEL", "pvp": 26000}, {"color": "TAUPE", "pvp": 26000}, {"color": "PLATA", "pvp": 26000}, {"color": "ACERO", "pvp": 26000}, {"color": "INDIGO", "pvp": 26000}]
-            },
-            "Pesada": {
-                "ECLYPSE": [{"color": "MARFIL", "pvp": 46000}, {"color": "CAPUCHINO", "pvp": 46000}, {"color": "HOJA SECA", "pvp": 46000}, {"color": "AZUL", "pvp": 46000}, {"color": "PLATA", "pvp": 46000}, {"color": "GRIS", "pvp": 46000}],
-                "POLYJACQUARD BITONO BILBAO": [{"color": "BEIGE", "pvp": 24000}, {"color": "TABACO", "pvp": 24000}, {"color": "AZUL", "pvp": 24000}, {"color": "ROSA", "pvp": 24000}, {"color": "PLATA", "pvp": 24000}, {"color": "GRIS", "pvp": 24000}]
-            }
-        }
-
         tipo = st.selectbox(f"Tipo de Tela {prefix}", options=list(CATALOGO_TELAS.keys()), key=tipo_key)
         referencias = list(CATALOGO_TELAS[tipo].keys())
         ref = st.selectbox(f"Referencia {prefix}", options=referencias, key=ref_key)
@@ -267,7 +276,6 @@ def pantalla_cotizador():
         color = st.selectbox(f"Color {prefix}", options=colores, key=color_key)
         info = next(x for x in CATALOGO_TELAS[tipo][ref] if x["color"] == color)
         st.number_input(f"Precio por Metro de la TELA {prefix} seleccionada ($)", value=info["pvp"], disabled=True, key=pvp_key)
-        return  # usamos el state de los widgets
 
     # Chequear si el BOM del diseño tiene TELA 2
     items_d = BOM_DICT.get(diseno_sel, [])
