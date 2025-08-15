@@ -18,21 +18,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- DATOS DE NEGOCIO (CATÁLOGOS Y PRECIOS) ---
+# --- DATOS DE NEGOCIO BASE (CATÁLOGOS Y PRECIOS) ---
 IVA_PERCENT = 0.19
 DISTANCIA_BOTON = 0.2
 DISTANCIA_OJALES = 0.14
 PASO_RODACHIN = 0.06
 
-TABLA_DISENOS = {
+# Valores por defecto (fallback) en caso de que no se cargue Excel
+TABLA_DISENOS_DEFAULT = {
     "TUBULAR": 2, "PRESILLAS SIN BOTON": 2, "PRESILLAS CON BOTON": 2, "REATA 3/4": 2,
     "ONDA MODERNA REATA BROCHES": 2.8, "ONDA MODERNA REATA ITALIANA": 2.5,
     "ARGOLLA PLASTICA": 2.5, "ARGOLLA METALICA": 2.5, "TUBULAR BOLERO RECTO": 2,
     "TUBULAR BOLERO ONDAS": 2, "3 PLIEGUES": 2.5
 }
 
-# --- TIPOS DE CORTINA Y SUS DISEÑOS DISPONIBLES (NUEVO) ---
-TIPOS_CORTINA = {
+TIPOS_CORTINA_DEFAULT = {
     "Cortina Sencilla": [
         "TUBULAR", "PRESILLAS SIN BOTON", "PRESILLAS CON BOTON", "REATA 3/4",
         "ARGOLLA PLASTICA", "ARGOLLA METALICA", "3 PLIEGUES",
@@ -46,9 +46,91 @@ TIPOS_CORTINA = {
     ]
 }
 
-# Mapa inverso para deducir el tipo desde un diseño (útil al editar)
-DISENO_A_TIPO = {dis: tipo for tipo, lista in TIPOS_CORTINA.items() for dis in lista}
+PRECIOS_MANO_DE_OBRA_DEFAULT = {
+    "M.O: TUBULAR": {"unidad": "MT", "pvp": 5000}, "M.O: PRESILLAS SIN BOTON": {"unidad": "MT", "pvp": 7000},
+    "M.O: PRESILLAS CON BOTON": {"unidad": "MT", "pvp": 8000}, "M.O: REATA 3/4": {"unidad": "MT", "pvp": 6000},
+    "M.O: ONDA MODERNA REATA BROCHES": {"unidad": "MT", "pvp": 10000}, "M.O: ONDA MODERNA REATA ITALIANA": {"unidad": "MT", "pvp": 10000},
+    "M.O: ARGOLLA PLASTICA": {"unidad": "MT", "pvp": 8000}, "M.O: ARGOLLA METALICA": {"unidad": "MT", "pvp": 8000},
+    "M.O: 3 PLIEGUES": {"unidad": "MT", "pvp": 10000}, "M.O: TUBULAR BOLERO RECTO": {"unidad": "MT", "pvp": 8000},
+    "M.O: TUBULAR BOLERO ONDAS": {"unidad": "MT", "pvp": 8000}
+}
 
+# Variables que se llenarán desde Excel o usarán default
+TABLA_DISENOS = dict(TABLA_DISENOS_DEFAULT)  # diseño -> multiplicador
+TIPOS_CORTINA = dict(TIPOS_CORTINA_DEFAULT)  # tipo -> [diseños]
+PRECIOS_MANO_DE_OBRA = dict(PRECIOS_MANO_DE_OBRA_DEFAULT)  # "M.O: DISEÑO" -> {unidad,pvp}
+DISENOS_A_TIPOS = {}  # diseño -> [tipos]
+
+# --- CARGA DE DISEÑOS DESDE EXCEL ---
+def cargar_disenos_desde_excel(excel_path_or_buffer) -> bool:
+    """
+    Espera un Excel con columnas:
+      - Diseño
+      - Tipo(s) de cortina  (separados por coma)
+      - Multiplicador       (float)
+      - M.O. ($/MT)         (número)
+    Devuelve True si cargó y mapeó correctamente; False si hubo error.
+    """
+    try:
+        df = pd.read_excel(excel_path_or_buffer)
+        # Normalizar nombres de columnas (por si cambian mayúsculas/minúsculas)
+        cols = {c.lower(): c for c in df.columns}
+        col_diseno = cols.get("diseño") or cols.get("diseno")
+        col_tipos = cols.get("tipo(s) de cortina") or cols.get("tipos de cortina")
+        col_mult = cols.get("multiplicador")
+        col_mo = cols.get("m.o. ($/mt)") or cols.get("m.o.") or cols.get("mo ($/mt)")
+
+        if not all([col_diseno, col_tipos, col_mult, col_mo]):
+            return False
+
+        # Construir estructuras
+        tabla_disenos_local = {}
+        tipos_cortina_local = {}
+        precios_mo_local = {}
+        disenos_a_tipos_local = {}
+
+        for _, row in df.iterrows():
+            dis = str(row[col_diseno]).strip()
+            tipos_raw = str(row[col_tipos]).split(",")
+            tipos = [t.strip() for t in tipos_raw if str(t).strip()]
+            try:
+                mult = float(row[col_mult])
+            except Exception:
+                continue
+            try:
+                mo_val = float(row[col_mo])
+            except Exception:
+                mo_val = 0.0
+
+            # Llenar dicts
+            tabla_disenos_local[dis] = mult
+            precios_mo_local[f"M.O: {dis}"] = {"unidad": "MT", "pvp": mo_val}
+            disenos_a_tipos_local.setdefault(dis, [])
+            for t in tipos:
+                tipos_cortina_local.setdefault(t, [])
+                if dis not in tipos_cortina_local[t]:
+                    tipos_cortina_local[t].append(dis)
+                if t not in disenos_a_tipos_local[dis]:
+                    disenos_a_tipos_local[dis].append(t)
+
+        # Si todo ok, sobrescribir globales
+        if tabla_disenos_local and tipos_cortina_local:
+            global TABLA_DISENOS, TIPOS_CORTINA, PRECIOS_MANO_DE_OBRA, DISENOS_A_TIPOS
+            TABLA_DISENOS = tabla_disenos_local
+            TIPOS_CORTINA = tipos_cortina_local
+            PRECIOS_MANO_DE_OBRA = precios_mo_local
+            DISENOS_A_TIPOS = disenos_a_tipos_local
+            return True
+        return False
+    except Exception:
+        return False
+
+# Intento de carga automática desde /mnt/data
+_default_excel_path = "/mnt/data/disenos_cortina.xlsx"
+if os.path.exists(_default_excel_path):
+    cargar_disenos_desde_excel(_default_excel_path)
+
+# --- CATÁLOGO DE TELAS (se mantiene igual) ---
 CATALOGO_TELAS = {
     "Loneta": {
         "NATALIA": [{"color": "MARFIL", "pvp": 38000}, {"color": "CAMEL", "pvp": 38000}, {"color": "PLATA", "pvp": 38000}],
@@ -70,6 +152,7 @@ CATALOGO_TELAS = {
     }
 }
 
+# --- BOM (se mantiene igual por ahora) ---
 BOM = {
     "TUBULAR": ["TELA 1", "M.O: TUBULAR"], "PRESILLAS SIN BOTON": ["TELA 1", "M.O: PRESILLAS SIN BOTON"],
     "PRESILLAS CON BOTON": ["TELA 1", "BOTON", "M.O: PRESILLAS CON BOTON"], "REATA 3/4": ["TELA 1", "REATA 3/4", "M.O: REATA 3/4"],
@@ -94,15 +177,6 @@ CATALOGO_INSUMOS = {
     "UÑETA REATA ITALIANA": {"unidad": "UND", "opciones": [{"ref": "PLASTICA", "color": "BLANCO", "pvp": 500}, {"ref": "METALICA", "color": "CROMADO", "pvp": 800}]}
 }
 
-PRECIOS_MANO_DE_OBRA = {
-    "M.O: TUBULAR": {"unidad": "MT", "pvp": 5000}, "M.O: PRESILLAS SIN BOTON": {"unidad": "MT", "pvp": 7000},
-    "M.O: PRESILLAS CON BOTON": {"unidad": "MT", "pvp": 8000}, "M.O: REATA 3/4": {"unidad": "MT", "pvp": 6000},
-    "M.O: ONDA MODERNA REATA BROCHES": {"unidad": "MT", "pvp": 10000}, "M.O: ONDA MODERNA REATA ITALIANA": {"unidad": "MT", "pvp": 10000},
-    "M.O: ARGOLLA PLASTICA": {"unidad": "MT", "pvp": 8000}, "M.O: ARGOLLA METALICA": {"unidad": "MT", "pvp": 8000},
-    "M.O: 3 PLIEGUES": {"unidad": "MT", "pvp": 10000}, "M.O: TUBULAR BOLERO RECTO": {"unidad": "MT", "pvp": 8000},
-    "M.O: TUBULAR BOLERO ONDAS": {"unidad": "MT", "pvp": 8000}
-}
-
 # --- INICIALIZACIÓN DEL ESTADO DE LA SESIÓN ---
 def inicializar_estado():
     if 'pagina_actual' not in st.session_state:
@@ -115,9 +189,9 @@ def inicializar_estado():
         st.session_state.cortina_calculada = None
     if 'editando_index' not in st.session_state:
         st.session_state.editando_index = None
-    # nuevo: tipo por defecto
     if 'tipo_cortina_sel' not in st.session_state:
-        st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0]
+        # tipo por defecto: primera llave de TIPOS_CORTINA
+        st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0] if TIPOS_CORTINA else "Cortina Sencilla"
 
 # --- CLASE PARA GENERACIÓN DE PDF ---
 class PDF(FPDF):
@@ -157,6 +231,16 @@ def mostrar_sidebar():
             st.warning("No se pudo cargar el logo 'Megatex.png'.")
 
         st.title("Megatex Cotizador")
+        
+        # Uploader de Excel de diseños
+        st.markdown("### Diseños (Excel)")
+        uploaded = st.file_uploader("Cargar disenos_cortina.xlsx", type=["xlsx"], accept_multiple_files=False)
+        if uploaded is not None:
+            ok = cargar_disenos_desde_excel(uploaded)
+            if ok:
+                st.success("Diseños cargados desde Excel.")
+            else:
+                st.error("No se pudo leer el Excel. Verifica columnas: Diseño, Tipo(s) de cortina, Multiplicador, M.O. ($/MT)")
         
         if st.button("Crear Cotización", icon="✍️", use_container_width=True):
             st.session_state.editando_index = None
@@ -288,13 +372,16 @@ def mostrar_pantalla_cotizador():
     st.markdown("---")
     st.subheader("2. Selecciona el Diseño")
 
-    # 2.1 Tipo de Cortina (nuevo)
-    tipo_opciones = list(TIPOS_CORTINA.keys())
+    # 2.1 Tipo de Cortina (cargado desde Excel si existe)
+    tipo_opciones = list(TIPOS_CORTINA.keys()) if TIPOS_CORTINA else list(TIPOS_CORTINA_DEFAULT.keys())
     tipo_default = st.session_state.get("tipo_cortina_sel", tipo_opciones[0])
+    if tipo_default not in tipo_opciones:
+        tipo_default = tipo_opciones[0]
     tipo_cortina_sel = st.selectbox("Tipo de Cortina", options=tipo_opciones, index=tipo_opciones.index(tipo_default), key="tipo_cortina_sel")
 
     # 2.2 Diseño filtrado por el tipo seleccionado
-    disenos_disponibles = TIPOS_CORTINA.get(tipo_cortina_sel, list(TABLA_DISENOS.keys()))
+    disenos_base = TIPOS_CORTINA if TIPOS_CORTINA else TIPOS_CORTINA_DEFAULT
+    disenos_disponibles = disenos_base.get(tipo_cortina_sel, list((TABLA_DISENOS or TABLA_DISENOS_DEFAULT).keys()))
     diseno_previo = st.session_state.get("diseno_sel", disenos_disponibles[0])
     if diseno_previo not in disenos_disponibles:
         diseno_previo = disenos_disponibles[0]
@@ -306,8 +393,9 @@ def mostrar_pantalla_cotizador():
         key="diseno_sel"
     )
 
-    # 2.3 Multiplicador
-    valor_multiplicador = float(TABLA_DISENOS.get(diseno_sel, 2.0))
+    # 2.3 Multiplicador (desde Excel si existe)
+    tabla_mult = TABLA_DISENOS if TABLA_DISENOS else TABLA_DISENOS_DEFAULT
+    valor_multiplicador = float(tabla_mult.get(diseno_sel, 2.0))
     multiplicador = st.number_input(
         "Multiplicador",
         min_value=1.0,
@@ -452,8 +540,10 @@ def iniciar_edicion(index):
     st.session_state.cantidad = cortina.get('cantidad', 1)
     st.session_state.diseno_sel = cortina['diseno']
     st.session_state.multiplicador = cortina['multiplicador']
-    # nuevo: deducir tipo según el diseño
-    st.session_state.tipo_cortina_sel = DISENO_A_TIPO.get(cortina['diseno'], list(TIPOS_CORTINA.keys())[0])
+    # Deducir tipo según diseño (desde Excel si existe)
+    disenos_to_tipos = DISENOS_A_TIPOS if DISENOS_A_TIPOS else {d: [t for t, lst in TIPOS_CORTINA_DEFAULT.items() if d in lst] for d in TABLA_DISENOS_DEFAULT.keys()}
+    tipos = disenos_to_tipos.get(cortina['diseno'], [])
+    st.session_state.tipo_cortina_sel = tipos[0] if tipos else (list(TIPOS_CORTINA.keys())[0] if TIPOS_CORTINA else list(TIPOS_CORTINA_DEFAULT.keys())[0])
     st.session_state.tipo_tela_sel = cortina['tela']['tipo']
     st.session_state.ref_tela_sel = cortina['tela']['referencia']
     st.session_state.color_tela_sel = cortina['tela']['color']
@@ -479,7 +569,9 @@ def calcular_y_mostrar_cotizacion():
     diseno = st.session_state.diseno_sel
     ancho = st.session_state.ancho
     alto = st.session_state.alto
-    multiplicador = st.session_state.multiplicador
+    # Multiplicador desde Excel si existe
+    tabla_mult = TABLA_DISENOS if TABLA_DISENOS else TABLA_DISENOS_DEFAULT
+    multiplicador = st.session_state.multiplicador if 'multiplicador' in st.session_state else float(tabla_mult.get(diseno, 2.0))
     num_cortinas = st.session_state.cantidad
     detalle_insumos = []
     subtotal = 0
@@ -512,10 +604,11 @@ def calcular_y_mostrar_cotizacion():
             pvp = seleccion['pvp']
             unidad = seleccion['unidad']
             nombre_mostrado = f"{nombre_insumo} ({seleccion['ref']} - {seleccion['color']})"
-        elif nombre_insumo in PRECIOS_MANO_DE_OBRA:
-            info = PRECIOS_MANO_DE_OBRA[nombre_insumo]
-            pvp = info['pvp']
-            unidad = info['unidad']
+        elif nombre_insumo.startswith("M.O:"):
+            # Tomar mano de obra desde Excel si existe
+            pinfo = PRECIOS_MANO_DE_OBRA.get(nombre_insumo, PRECIOS_MANO_DE_OBRA_DEFAULT.get(nombre_insumo, {"unidad": "MT", "pvp": 0}))
+            pvp = pinfo["pvp"]
+            unidad = pinfo["unidad"]
         precio_total_insumo = cantidad_insumo_total * pvp
         subtotal += precio_total_insumo
         detalle_insumos.append({
