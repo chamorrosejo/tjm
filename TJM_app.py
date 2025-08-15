@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import os
@@ -29,6 +30,24 @@ TABLA_DISENOS = {
     "ARGOLLA PLASTICA": 2.5, "ARGOLLA METALICA": 2.5, "TUBULAR BOLERO RECTO": 2,
     "TUBULAR BOLERO ONDAS": 2, "3 PLIEGUES": 2.5
 }
+
+# --- TIPOS DE CORTINA Y SUS DISEÑOS DISPONIBLES (NUEVO) ---
+TIPOS_CORTINA = {
+    "Cortina Sencilla": [
+        "TUBULAR", "PRESILLAS SIN BOTON", "PRESILLAS CON BOTON", "REATA 3/4",
+        "ARGOLLA PLASTICA", "ARGOLLA METALICA", "3 PLIEGUES",
+        "TUBULAR BOLERO RECTO", "TUBULAR BOLERO ONDAS"
+    ],
+    "Cortina Doble": [
+        "ONDA MODERNA REATA BROCHES", "ONDA MODERNA REATA ITALIANA"
+    ],
+    "Cortina de Cocina": [
+        "TUBULAR", "PRESILLAS SIN BOTON", "TUBULAR BOLERO RECTO", "TUBULAR BOLERO ONDAS"
+    ]
+}
+
+# Mapa inverso para deducir el tipo desde un diseño (útil al editar)
+DISENO_A_TIPO = {dis: tipo for tipo, lista in TIPOS_CORTINA.items() for dis in lista}
 
 CATALOGO_TELAS = {
     "Loneta": {
@@ -96,6 +115,9 @@ def inicializar_estado():
         st.session_state.cortina_calculada = None
     if 'editando_index' not in st.session_state:
         st.session_state.editando_index = None
+    # nuevo: tipo por defecto
+    if 'tipo_cortina_sel' not in st.session_state:
+        st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0]
 
 # --- CLASE PARA GENERACIÓN DE PDF ---
 class PDF(FPDF):
@@ -265,9 +287,45 @@ def mostrar_pantalla_cotizador():
     partida = st.radio("¿Cortina partida?", ("SI", "NO"), horizontal=True, key="partida")
     st.markdown("---")
     st.subheader("2. Selecciona el Diseño")
-    diseno_sel = st.selectbox("Diseño", options=list(TABLA_DISENOS.keys()), key="diseno_sel")
+
+    # 2.1 Tipo de Cortina (nuevo)
+    tipo_opciones = list(TIPOS_CORTINA.keys())
+    tipo_default = st.session_state.get("tipo_cortina_sel", tipo_opciones[0])
+    tipo_cortina_sel = st.selectbox("Tipo de Cortina", options=tipo_opciones, index=tipo_opciones.index(tipo_default), key="tipo_cortina_sel")
+
+    # 2.2 Diseño filtrado por el tipo seleccionado
+    disenos_disponibles = TIPOS_CORTINA.get(tipo_cortina_sel, list(TABLA_DISENOS.keys()))
+    diseno_previo = st.session_state.get("diseno_sel", disenos_disponibles[0])
+    if diseno_previo not in disenos_disponibles:
+        diseno_previo = disenos_disponibles[0]
+
+    diseno_sel = st.selectbox(
+        "Diseño",
+        options=disenos_disponibles,
+        index=disenos_disponibles.index(diseno_previo),
+        key="diseno_sel"
+    )
+
+    # 2.3 Multiplicador
     valor_multiplicador = float(TABLA_DISENOS.get(diseno_sel, 2.0))
-    multiplicador = st.number_input("Multiplicador", min_value=1.0, value=valor_multiplicador, step=0.1, key="multiplicador")
+    multiplicador = st.number_input(
+        "Multiplicador",
+        min_value=1.0,
+        value=valor_multiplicador,
+        step=0.1,
+        key="multiplicador"
+    )
+
+    # 2.4 Ancho Cortina (informativo: ancho ventana * multiplicador)
+    ancho_cortina = st.session_state.ancho * multiplicador
+    st.number_input(
+        "Ancho Cortina (m)",
+        value=float(ancho_cortina),
+        step=0.1,
+        disabled=True,
+        key="ancho_cortina_info"
+    )
+
     st.markdown("---")
     st.subheader("3. Selecciona la Tela")
     tipo_tela_sel = st.selectbox("Tipo de Tela", options=list(CATALOGO_TELAS.keys()), key="tipo_tela_sel")
@@ -394,6 +452,8 @@ def iniciar_edicion(index):
     st.session_state.cantidad = cortina.get('cantidad', 1)
     st.session_state.diseno_sel = cortina['diseno']
     st.session_state.multiplicador = cortina['multiplicador']
+    # nuevo: deducir tipo según el diseño
+    st.session_state.tipo_cortina_sel = DISENO_A_TIPO.get(cortina['diseno'], list(TIPOS_CORTINA.keys())[0])
     st.session_state.tipo_tela_sel = cortina['tela']['tipo']
     st.session_state.ref_tela_sel = cortina['tela']['referencia']
     st.session_state.color_tela_sel = cortina['tela']['color']
@@ -466,6 +526,7 @@ def calcular_y_mostrar_cotizacion():
     iva = total * IVA_PERCENT
     subtotal = total - iva
     st.session_state.cortina_calculada = {
+        "tipo": st.session_state.tipo_cortina_sel,
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
         "cantidad": num_cortinas,
         "partida": st.session_state.partida,
