@@ -33,17 +33,17 @@ SCRIPT_DIR = os.path.dirname(__file__) if "__file__" in globals() else os.getcwd
 _default_designs = os.path.join(SCRIPT_DIR, "data", "disenos_cortina.xlsx")
 _default_bom     = os.path.join(SCRIPT_DIR, "data", "bom.xlsx")
 _default_cat_ins = os.path.join(SCRIPT_DIR, "data", "catalogo_insumos.xlsx")
-_default_cat_tel = os.path.join(SCRIPT_DIR, "data", "catalogo_telas.xlsx")  # NEW
+_default_cat_tel = os.path.join(SCRIPT_DIR, "data", "catalogo_telas.xlsx")
 
-DESIGNS_XLSX_PATH = os.environ.get("DESIGNS_XLSX_PATH") or st.secrets.get("DESIGNS_XLSX_PATH", _default_designs)
-BOM_XLSX_PATH     = os.environ.get("BOM_XLSX_PATH")     or st.secrets.get("BOM_XLSX_PATH", _default_bom)
-CATALOG_XLSX_PATH = os.environ.get("CATALOG_XLSX_PATH") or st.secrets.get("CATALOG_XLSX_PATH", _default_cat_ins)
-CATALOG_TELAS_XLSX_PATH = os.environ.get("CATALOG_TELAS_XLSX_PATH") or st.secrets.get("CATALOG_TELAS_XLSX_PATH", _default_cat_tel)  # NEW
+DESIGNS_XLSX_PATH      = os.environ.get("DESIGNS_XLSX_PATH")       or st.secrets.get("DESIGNS_XLSX_PATH", _default_designs)
+BOM_XLSX_PATH          = os.environ.get("BOM_XLSX_PATH")           or st.secrets.get("BOM_XLSX_PATH", _default_bom)
+CATALOG_XLSX_PATH      = os.environ.get("CATALOG_XLSX_PATH")       or st.secrets.get("CATALOG_XLSX_PATH", _default_cat_ins)
+CATALOG_TELAS_XLSX_PATH= os.environ.get("CATALOG_TELAS_XLSX_PATH") or st.secrets.get("CATALOG_TELAS_XLSX_PATH", _default_cat_tel)
 
 REQUIRED_DESIGNS_COLS = ["Diseño", "Tipo", "Multiplicador", "PVP M.O."]
 REQUIRED_BOM_COLS     = ["Diseño", "Insumo", "Unidad", "ReglaCantidad", "Parametro", "DependeDeSeleccion", "Observaciones"]
 REQUIRED_CAT_COLS     = ["Insumo", "Unidad", "Ref", "Color", "PVP"]
-REQUIRED_TELAS_COLS   = ["TipoTela", "Referencia", "Color", "PVP/Metro ($)"]  # matches provided template
+REQUIRED_TELAS_COLS   = ["TipoTela", "Referencia", "Color", "PVP/Metro ($)"]  # "Ancho (m)" y "Observaciones" opcionales
 
 ALLOWED_RULES = {"MT_ANCHO_X_MULT", "UND_OJALES_PAR", "UND_BOTON_PAR", "FIJO"}
 
@@ -130,8 +130,9 @@ def load_catalog_from_excel(path: str):
     df = pd.read_excel(path, engine="openpyxl")
     faltantes = [c for c in REQUIRED_CAT_COLS if c not in df.columns]
     if faltantes:
-        st.error(f"El catálogo de insumos debe tener columnas: {REQUIRED_CAT_COLS}. Encontradas: {list(df.columns)}")
+        st.error(f"El catálogo debe tener columnas: {REQUIRED_CAT_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
+
     catalog = {}
     for _, row in df.iterrows():
         insumo = str(row["Insumo"]).strip()
@@ -147,27 +148,28 @@ def load_catalog_from_excel(path: str):
 
 def load_telas_from_excel(path: str):
     if not os.path.exists(path):
-        st.error(f"No se encontró el catálogo de TELAS en: {path}")
+        st.error(f"No se encontró el catálogo de telas en: {path}")
         st.stop()
     df = pd.read_excel(path, engine="openpyxl")
     faltantes = [c for c in REQUIRED_TELAS_COLS if c not in df.columns]
     if faltantes:
-        st.error(f"El catálogo de TELAS debe tener columnas: {REQUIRED_TELAS_COLS}. Encontradas: {list(df.columns)}")
+        st.error(f"El catálogo de telas debe tener columnas: {REQUIRED_TELAS_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
-    # build nested dict TipoTela -> Referencia -> list of {color, pvp}
+
+    # Build nested structure: {TipoTela: {Referencia: [{"color":..., "pvp":...}, ...]}}
     telas = {}
     for _, row in df.iterrows():
         tipo = str(row["TipoTela"]).strip()
-        ref  = str(row["Referencia"]).strip()
-        color= str(row["Color"]).strip()
-        pvp  = _safe_float(row["PVP/Metro ($)"], 0.0)
+        ref = str(row["Referencia"]).strip()
+        color = str(row["Color"]).strip()
+        pvp = _safe_float(row["PVP/Metro ($)"], 0.0)
         telas.setdefault(tipo, {})
         telas[tipo].setdefault(ref, [])
         telas[tipo][ref].append({"color": color, "pvp": pvp})
     return telas
 
 # =======================
-# PDF
+# PDF (igual que antes)
 # =======================
 class PDF(FPDF):
     def header(self):
@@ -198,7 +200,7 @@ st.set_page_config(page_title="Megatex Cotizador", page_icon="Megatex.png", layo
 TABLA_DISENOS, TIPOS_CORTINA, PRECIOS_MANO_DE_OBRA, DISENOS_A_TIPOS, DF_DISENOS = load_designs_from_excel(DESIGNS_XLSX_PATH)
 BOM_DICT, DF_BOM = load_bom_from_excel(BOM_XLSX_PATH)
 CATALOGO_INSUMOS = load_catalog_from_excel(CATALOG_XLSX_PATH)
-CATALOGO_TELAS = load_telas_from_excel(CATALOG_TELAS_XLSX_PATH)  # NEW
+CATALOGO_TELAS = load_telas_from_excel(CATALOG_TELAS_XLSX_PATH)
 
 def init_state():
     if 'pagina_actual' not in st.session_state:
@@ -232,11 +234,10 @@ def sidebar():
 
 def pantalla_cotizador():
     st.header("Configurar Cortina")
-    st.subheader("1. Medidas y Opciones Finales")
+    st.subheader("1. Medidas")
     ancho = st.number_input("Ancho de la Ventana (m)", min_value=0.1, value=2.0, step=0.1, key="ancho")
     alto = st.number_input("Alto de la Cortina (m)", min_value=0.1, value=2.0, step=0.1, key="alto")
     cantidad_cortinas = st.number_input("Cantidad (und)", min_value=1, value=1, step=1, key="cantidad")
-    partida = st.radio("¿Cortina partida?", ("SI", "NO"), horizontal=True, key="partida")
     st.markdown("---")
     st.subheader("2. Selecciona el Diseño")
 
@@ -261,13 +262,14 @@ def pantalla_cotizador():
     st.number_input("Ancho Cortina (m)", value=float(ancho_cortina), step=0.1, disabled=True, key="ancho_cortina_info")
 
     st.markdown("---")
-    st.subheader("3. Selecciona la Tela")
+    st.subheader("3. Selecciona la(s) Tela(s)")
 
-    def _ui_tela(prefix):
+    def ui_tela(prefix: str):
         tipo_key = f"tipo_tela_sel_{prefix}"
         ref_key  = f"ref_tela_sel_{prefix}"
         color_key= f"color_tela_sel_{prefix}"
         pvp_key  = f"pvp_tela_{prefix}"
+        modo_key = f"modo_conf_{prefix}"
 
         tipo = st.selectbox(f"Tipo de Tela {prefix}", options=list(CATALOGO_TELAS.keys()), key=tipo_key)
         referencias = list(CATALOGO_TELAS[tipo].keys())
@@ -275,16 +277,19 @@ def pantalla_cotizador():
         colores = [x["color"] for x in CATALOGO_TELAS[tipo][ref]]
         color = st.selectbox(f"Color {prefix}", options=colores, key=color_key)
         info = next(x for x in CATALOGO_TELAS[tipo][ref] if x["color"] == color)
-        st.number_input(f"Precio por Metro de la TELA {prefix} seleccionada ($)", value=info["pvp"], disabled=True, key=pvp_key)
+        st.number_input(f"PVP/Metro TELA {prefix} ($)", value=info["pvp"], disabled=True, key=pvp_key)
 
-    # Chequear si el BOM del diseño tiene TELA 2
+        # NUEVO: Modo de confección por tela
+        st.radio(f"Modo de confección {prefix}", options=["Entera", "Partida", "Semipartida"], horizontal=True, key=modo_key)
+
+    # Ver si el BOM del diseño incluye TELA 2
     items_d = BOM_DICT.get(diseno_sel, [])
     usa_tela2 = any(i["Insumo"].strip().upper() == "TELA 2" for i in items_d)
 
-    _ui_tela("1")
+    ui_tela("1")
     if usa_tela2:
         st.markdown("—")
-        _ui_tela("2")
+        ui_tela("2")
 
     st.markdown("---")
     st.subheader("4. Insumos según BOM")
@@ -369,7 +374,7 @@ def calcular_y_mostrar_cotizacion():
             pvp = _safe_float(st.session_state.get("pvp_tela_1"), 0.0)
             ref = st.session_state.get("ref_tela_sel_1", "")
             color = st.session_state.get("color_tela_sel_1", "")
-            nombre_mostrado = f"TELA: {ref} - {color}"
+            nombre_mostrado = f"TELA 1: {ref} - {color}"
             uni = "MT"
         elif nombre == "TELA 2":
             pvp = _safe_float(st.session_state.get("pvp_tela_2"), 0.0)
@@ -420,10 +425,32 @@ def calcular_y_mostrar_cotizacion():
     total = round(subtotal, 2)
     subtotal_sin_iva = round(total - iva, 2)
 
+    # Adjuntar modos de confección por tela (solo informativo por ahora)
+    tela_info = {
+        "tela1": {
+            "tipo": st.session_state.get("tipo_tela_sel_1", ""),
+            "referencia": st.session_state.get("ref_tela_sel_1", ""),
+            "color": st.session_state.get("color_tela_sel_1", ""),
+            "pvp": _safe_float(st.session_state.get("pvp_tela_1"), 0.0),
+            "modo_confeccion": st.session_state.get("modo_conf_1", ""),
+        }
+    }
+    if st.session_state.get("pvp_tela_2") is not None:
+        tela_info["tela2"] = {
+            "tipo": st.session_state.get("tipo_tela_sel_2", ""),
+            "referencia": st.session_state.get("ref_tela_sel_2", ""),
+            "color": st.session_state.get("color_tela_sel_2", ""),
+            "pvp": _safe_float(st.session_state.get("pvp_tela_2"), 0.0),
+            "modo_confeccion": st.session_state.get("modo_conf_2", ""),
+        }
+    else:
+        tela_info["tela2"] = None
+
     st.session_state.cortina_calculada = {
         "tipo": st.session_state.tipo_cortina_sel,
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
-        "cantidad": num_cortinas, "partida": st.session_state.partida,
+        "cantidad": num_cortinas,
+        "telas": tela_info,
         "detalle_insumos": detalle_insumos, "subtotal": subtotal_sin_iva, "iva": iva, "total": total
     }
 
@@ -485,10 +512,12 @@ def pantalla_resumen():
 # =======================
 def main():
     init_state()
-    sidebar()
-    if st.session_state.pagina_actual == 'datos':
+    with st.sidebar:
+        sidebar()
+    page = st.session_state.pagina_actual
+    if page == 'datos':
         pantalla_datos()
-    elif st.session_state.pagina_actual == 'resumen':
+    elif page == 'resumen':
         pantalla_resumen()
     else:
         pantalla_cotizador()
