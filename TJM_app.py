@@ -300,6 +300,11 @@ def pantalla_cotizador():
     if st.session_state.get('cortina_calculada'):
         st.success("Cálculo realizado. Revisa los detalles a continuación.")
         df_detalle = pd.DataFrame(st.session_state.cortina_calculada['detalle_insumos'])
+        
+        # Formatear las columnas de precios con el signo de dólar y separador de miles
+        df_detalle['P.V.P/Unit ($)'] = df_detalle['P.V.P/Unit ($)'].apply(lambda x: f"${int(x):,}")
+        df_detalle['Precio ($)'] = df_detalle['Precio ($)'].apply(lambda x: f"${int(x):,}")
+
         st.dataframe(df_detalle, use_container_width=True, hide_index=True)
         c1, c2, c3 = st.columns(3)
         c1.metric("Subtotal Cortina", f"${int(st.session_state.cortina_calculada['subtotal']):,}")
