@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import os
@@ -303,9 +302,9 @@ def pantalla_cotizador():
         df_detalle = pd.DataFrame(st.session_state.cortina_calculada['detalle_insumos'])
         st.dataframe(df_detalle, use_container_width=True, hide_index=True)
         c1, c2, c3 = st.columns(3)
-        c1.metric("Subtotal Cortina", f"${st.session_state.cortina_calculada['subtotal']:,.2f}")
-        c2.metric("IVA Cortina", f"${st.session_state.cortina_calculada['iva']:,.2f}")
-        c3.metric("Total Cortina", f"${st.session_state.cortina_calculada['total']:,.2f}")
+        c1.metric("Subtotal Cortina", f"${int(st.session_state.cortina_calculada['subtotal']):,}")
+        c2.metric("IVA Cortina", f"${int(st.session_state.cortina_calculada['iva']):,}")
+        c3.metric("Total Cortina", f"${int(st.session_state.cortina_calculada['total']):,}")
 
 def mostrar_insumos_bom(diseno_sel: str):
     # Solo mostrar los que requieren selección
@@ -398,7 +397,7 @@ def calcular_y_mostrar_cotizacion():
             "Unidad": uni,
             "Cantidad": round(cantidad_total, 2) if uni != "UND" else int(round(cantidad_total)),
             "P.V.P/Unit ($)": pvp,
-            "Precio ($)": round(precio_total, 2),
+            "Precio ($)": round(precio_total),
         })
 
     # --- Mano de Obra (línea independiente) ---
@@ -411,7 +410,7 @@ def calcular_y_mostrar_cotizacion():
     if mo_info and _safe_float(mo_info.get("pvp"), 0) > 0:
         cant_mo = ancho * multiplicador * num_cortinas
         pvp_mo = _safe_float(mo_info["pvp"], 0.0)
-        precio_mo = round(cant_mo * pvp_mo, 2)
+        precio_mo = round(cant_mo * pvp_mo)
         subtotal += precio_mo
         detalle_insumos.append({
             "Insumo": mo_key,
@@ -421,9 +420,9 @@ def calcular_y_mostrar_cotizacion():
             "Precio ($)": precio_mo,
         })
 
-    iva = round(subtotal * IVA_PERCENT, 2)
-    total = round(subtotal, 2)
-    subtotal_sin_iva = round(total - iva, 2)
+    iva = round(subtotal * IVA_PERCENT)
+    total = round(subtotal)
+    subtotal_sin_iva = total - iva
 
     # Adjuntar modos de confección por tela (solo informativo por ahora)
     tela_info = {
@@ -496,16 +495,16 @@ def pantalla_resumen():
                 c1.markdown(f"**{i+1}**")
                 c2.markdown(f"**{cortina['diseno']}**")
                 c3.write(f"Dimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} × {cortina['alto']:.2f} m  •  Cant: {cortina['cantidad']}")
-                c4.markdown(f"**${cortina['total']:,.2f}**")
+                c4.markdown(f"**${int(cortina['total']):,}**")
 
     total_final = sum(c['total'] for c in st.session_state.cortinas_resumen)
     iva = total_final * IVA_PERCENT
     subtotal = total_final - iva
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Subtotal", f"${subtotal:,.2f}")
-    c2.metric(f"IVA ({IVA_PERCENT:.0%})", f"${iva:,.2f}")
-    c3.metric("Total Cotización", f"${total_final:,.2f}")
+    c1.metric("Subtotal", f"${int(subtotal):,}")
+    c2.metric(f"IVA ({IVA_PERCENT:.0%})", f"${int(iva):,}")
+    c3.metric("Total Cotización", f"${int(total_final):,}")
 
 # =======================
 # MAIN
