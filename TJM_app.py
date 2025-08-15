@@ -156,7 +156,6 @@ def load_telas_from_excel(path: str):
         st.error(f"El catálogo de telas debe tener columnas: {REQUIRED_TELAS_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
 
-    # Build nested structure: {TipoTela: {Referencia: [{"color":..., "pvp":...}, ...]}}
     telas = {}
     for _, row in df.iterrows():
         tipo = str(row["TipoTela"]).strip()
@@ -215,22 +214,21 @@ def init_state():
         st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0]
 
 def sidebar():
-    with st.sidebar:
-        st.title("Megatex Cotizador")
-        st.caption(f"Diseños: {DESIGNS_XLSX_PATH}")
-        st.caption(f"BOM: {BOM_XLSX_PATH}")
-        st.caption(f"Catálogo insumos: {CATALOG_XLSX_PATH}")
-        st.caption(f"Catálogo telas: {CATALOG_TELAS_XLSX_PATH}")
-        if st.button("Recargar datos"):
-            st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
-        st.divider()
-        if st.button("Crear Cotización", use_container_width=True):
-            st.session_state.editando_index = None
-            st.session_state.pagina_actual = 'cotizador'; st.rerun()
-        if st.button("Datos de la Cotización", use_container_width=True):
-            st.session_state.pagina_actual = 'datos'; st.rerun()
-        if st.button("Ver Resumen Final", use_container_width=True):
-            st.session_state.pagina_actual = 'resumen'; st.rerun()
+    st.title("Megatex Cotizador")
+    st.caption(f"Diseños: {DESIGNS_XLSX_PATH}")
+    st.caption(f"BOM: {BOM_XLSX_PATH}")
+    st.caption(f"Catálogo insumos: {CATALOG_XLSX_PATH}")
+    st.caption(f"Catálogo telas: {CATALOG_TELAS_XLSX_PATH}")
+    if st.button("Recargar datos"):
+        st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
+    st.divider()
+    if st.button("Crear Cotización", use_container_width=True):
+        st.session_state.editando_index = None
+        st.session_state.pagina_actual = 'cotizador'; st.rerun()
+    if st.button("Datos de la Cotización", use_container_width=True):
+        st.session_state.pagina_actual = 'datos'; st.rerun()
+    if st.button("Ver Resumen Final", use_container_width=True):
+        st.session_state.pagina_actual = 'resumen'; st.rerun()
 
 def pantalla_cotizador():
     st.header("Configurar Cortina")
@@ -279,7 +277,6 @@ def pantalla_cotizador():
         info = next(x for x in CATALOGO_TELAS[tipo][ref] if x["color"] == color)
         st.number_input(f"PVP/Metro TELA {prefix} ($)", value=info["pvp"], disabled=True, key=pvp_key)
 
-        # NUEVO: Modo de confección por tela
         st.radio(f"Modo de confección {prefix}", options=["Entera", "Partida", "Semipartida"], horizontal=True, key=modo_key)
 
     # Ver si el BOM del diseño incluye TELA 2
@@ -306,6 +303,19 @@ def pantalla_cotizador():
         c1.metric("Subtotal Cortina", f"${st.session_state.cortina_calculada['subtotal']:,.2f}")
         c2.metric("IVA Cortina", f"${st.session_state.cortina_calculada['iva']:,.2f}")
         c3.metric("Total Cortina", f"${st.session_state.cortina_calculada['total']:,.2f}")
+
+        # --- NUEVO: Botón Guardar cortina + confirmación ---
+        if st.button("Guardar cortina", use_container_width=True):
+            st.session_state.cortinas_resumen.append({
+                "tipo": st.session_state.cortina_calculada["tipo"],
+                "diseno": st.session_state.cortina_calculada["diseno"],
+                "multiplicador": st.session_state.cortina_calculada["multiplicador"],
+                "ancho": st.session_state.cortina_calculada["ancho"],
+                "alto": st.session_state.cortina_calculada["alto"],
+                "cantidad": st.session_state.cortina_calculada["cantidad"],
+                "total": st.session_state.cortina_calculada["total"],
+            })
+            st.success("✅ Cortina guardada en la cotización. Ve a 'Ver Resumen Final' para verla en el listado.")
 
 def mostrar_insumos_bom(diseno_sel: str):
     # Solo mostrar los que requieren selección
@@ -425,8 +435,7 @@ def calcular_y_mostrar_cotizacion():
     total = round(subtotal, 2)
     subtotal_sin_iva = round(total - iva, 2)
 
-    # Adjuntar modos de confección por tela (solo informativo por ahora)
-    tela_info = {
+    telas = {
         "tela1": {
             "tipo": st.session_state.get("tipo_tela_sel_1", ""),
             "referencia": st.session_state.get("ref_tela_sel_1", ""),
@@ -436,7 +445,7 @@ def calcular_y_mostrar_cotizacion():
         }
     }
     if st.session_state.get("pvp_tela_2") is not None:
-        tela_info["tela2"] = {
+        telas["tela2"] = {
             "tipo": st.session_state.get("tipo_tela_sel_2", ""),
             "referencia": st.session_state.get("ref_tela_sel_2", ""),
             "color": st.session_state.get("color_tela_sel_2", ""),
@@ -444,13 +453,13 @@ def calcular_y_mostrar_cotizacion():
             "modo_confeccion": st.session_state.get("modo_conf_2", ""),
         }
     else:
-        tela_info["tela2"] = None
+        telas["tela2"] = None
 
     st.session_state.cortina_calculada = {
         "tipo": st.session_state.tipo_cortina_sel,
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
         "cantidad": num_cortinas,
-        "telas": tela_info,
+        "telas": telas,
         "detalle_insumos": detalle_insumos, "subtotal": subtotal_sin_iva, "iva": iva, "total": total
     }
 
