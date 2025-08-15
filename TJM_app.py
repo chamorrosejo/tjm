@@ -11,39 +11,19 @@ import math
 # =========================================
 SCRIPT_DIR = os.path.dirname(__file__) if "__file__" in globals() else os.getcwd()
 
-# Defaults in repo
+# Excel paths with optional overrides
 _default_designs = os.path.join(SCRIPT_DIR, "data", "disenos_cortina.xlsx")
 _default_bom     = os.path.join(SCRIPT_DIR, "data", "bom.xlsx")
-_default_cat     = os.path.join(SCRIPT_DIR, "data", "catalogo_insumos.xlsx")
+_default_catalog = os.path.join(SCRIPT_DIR, "data", "catalogo_insumos.xlsx")
 
-# Optional overrides via env or st.secrets
-_excel_from_env_designs = os.environ.get("DESIGNS_XLSX_PATH")
-_excel_from_env_bom     = os.environ.get("BOM_XLSX_PATH")
-_excel_from_env_cat     = os.environ.get("CATALOG_XLSX_PATH")
-
-try:
-    _excel_from_secrets_designs = st.secrets.get("DESIGNS_XLSX_PATH")
-except Exception:
-    _excel_from_secrets_designs = None
-
-try:
-    _excel_from_secrets_bom = st.secrets.get("BOM_XLSX_PATH")
-except Exception:
-    _excel_from_secrets_bom = None
-
-try:
-    _excel_from_secrets_cat = st.secrets.get("CATALOG_XLSX_PATH")
-except Exception:
-    _excel_from_secrets_cat = None
-
-DESIGNS_XLSX_PATH = _excel_from_env_designs or _excel_from_secrets_designs or _default_designs
-BOM_XLSX_PATH     = _excel_from_env_bom or _excel_from_secrets_bom or _default_bom
-CATALOG_XLSX_PATH = _excel_from_env_cat or _excel_from_secrets_cat or _default_cat
+DESIGNS_XLSX_PATH = os.environ.get("DESIGNS_XLSX_PATH", None) or (st.secrets.get("DESIGNS_XLSX_PATH") if hasattr(st, "secrets") else None) or _default_designs
+BOM_XLSX_PATH     = os.environ.get("BOM_XLSX_PATH", None) or (st.secrets.get("BOM_XLSX_PATH") if hasattr(st, "secrets") else None) or _default_bom
+CATALOG_XLSX_PATH = os.environ.get("CATALOG_XLSX_PATH", None) or (st.secrets.get("CATALOG_XLSX_PATH") if hasattr(st, "secrets") else None) or _default_catalog
 
 # Required columns
 REQUIRED_DESIGNS_COLS = ["Diseño", "Tipo", "Multiplicador", "PVP M.O."]
 REQUIRED_BOM_COLS     = ["Diseño", "Insumo", "Unidad", "ReglaCantidad", "Parametro", "DependeDeSeleccion", "Observaciones"]
-REQUIRED_CAT_COLS     = ["Insumo", "Unidad", "Ref", "Color", "PVP"]  # Notas opcional
+REQUIRED_CATALOG_COLS = ["Insumo", "Unidad", "Ref", "Color", "PVP"]
 
 # Allowed rules
 ALLOWED_RULES = {"MT_ANCHO_X_MULT", "UND_OJALES_PAR", "UND_BOTON_PAR", "FIJO"}
@@ -60,13 +40,10 @@ def ceil_to_even(x: float) -> int:
     n = math.ceil(x)
     return n if n % 2 == 0 else n + 1
 
-def _ensure_file(path: str, kind: str):
-    if not os.path.exists(path):
-        st.error(f"No se encontró el archivo de {kind} en: {path}")
-        st.stop()
-
 def load_designs_from_excel(path: str):
-    _ensure_file(path, "Diseños")
+    if not os.path.exists(path):
+        st.error(f"No se encontró el archivo Excel de Diseños en: {path}")
+        st.stop()
     try:
         df = pd.read_excel(path, engine="openpyxl")
     except Exception as e:
@@ -118,7 +95,9 @@ def load_designs_from_excel(path: str):
     return tabla_disenos, tipos_cortina, precios_mo, disenos_a_tipos, df
 
 def load_bom_from_excel(path: str):
-    _ensure_file(path, "BOM")
+    if not os.path.exists(path):
+        st.error(f"No se encontró el archivo Excel de BOM en: {path}")
+        st.stop()
     try:
         df = pd.read_excel(path, engine="openpyxl")
     except Exception as e:
@@ -134,6 +113,7 @@ def load_bom_from_excel(path: str):
         )
         st.stop()
 
+    # Validar reglas
     reglas_invalidas = sorted(set(df["ReglaCantidad"].astype(str)) - ALLOWED_RULES)
     if reglas_invalidas:
         st.error(
@@ -143,6 +123,7 @@ def load_bom_from_excel(path: str):
         )
         st.stop()
 
+    # Dict por diseño
     bom_dict = {}
     for _, row in df.iterrows():
         dis = str(row["Diseño"]).strip()
@@ -150,54 +131,46 @@ def load_bom_from_excel(path: str):
             "Insumo": str(row["Insumo"]).strip(),
             "Unidad": str(row["Unidad"]).strip().upper(),
             "ReglaCantidad": str(row["ReglaCantidad"]).strip().upper(),
-            "Parametro": ("" if pd.isna(row["Parametro"]) else str(row["Parametro"]).strip()),
+            "Parametro": str(row["Parametro"]).strip(),
             "DependeDeSeleccion": str(row["DependeDeSeleccion"]).strip().upper(),
-            "Observaciones": "" if pd.isna(row["Observaciones"]) else str(row["Observaciones"]).strip(),
+            "Observaciones": str(row["Observaciones"]).strip(),
         }
         bom_dict.setdefault(dis, []).append(item)
     return bom_dict, df
 
 def load_catalog_from_excel(path: str):
-    _ensure_file(path, "Catálogo de Insumos")
-    try:
-        df = pd.read_excel(path, engine="openpyxl", sheet_name=0)
-    except Exception as e:
-        st.error(f"No se pudo leer el Excel del Catálogo: {e}")
+    if not os.path.exists(path):
+        st.error(f"No se encontró el archivo Excel de Catálogo en: {path}")
         st.stop()
-
-    faltantes = [c for c in REQUIRED_CAT_COLS if c not in df.columns]
+    try:
+        df = pd.read_excel(path, engine="openpyxl")
+    except Exception as e:
+        st.error(f"No se pudo leer el Excel de Catálogo: {e}")
+        st.stop()
+    faltantes = [c for c in REQUIRED_CATALOG_COLS if c not in df.columns]
     if faltantes:
         st.error(
-            "El Catálogo debe tener estas columnas (Notas es opcional):\n"
-            + "\n".join(f"- {c}" for c in REQUIRED_CAT_COLS)
+            "El Catálogo debe tener al menos estas columnas:\n"
+            + "\n".join(f"- {c}" for c in REQUIRED_CATALOG_COLS)
             + f"\n\nColumnas encontradas: {list(df.columns)}"
         )
         st.stop()
 
-    # Build structure: { "FLECO": {"unidad":"MT","opciones":[{"ref":..,"color":..,"pvp":..}, ...] }, ... }
-    catalog = {}
+    # construir estructura: CATALOGO_INSUMOS[insumo] = {"unidad":..., "opciones":[{ref,color,pvp}]}
+    res = {}
     for _, row in df.iterrows():
         insumo = str(row["Insumo"]).strip()
         unidad = str(row["Unidad"]).strip().upper()
-        ref = "" if pd.isna(row["Ref"]) else str(row["Ref"]).strip()
-        color = "" if pd.isna(row["Color"]) else str(row["Color"]).strip()
+        ref = str(row["Ref"]).strip()
+        color = str(row["Color"]).strip()
         try:
             pvp = float(row["PVP"])
         except Exception:
-            st.error(f"PVP inválido en el catálogo para insumo '{insumo}' (ref '{ref}', color '{color}').")
-            st.stop()
-
-        entry = {"ref": ref, "color": color, "pvp": pvp}
-        if insumo not in catalog:
-            catalog[insumo] = {"unidad": unidad, "opciones": [entry]}
-        else:
-            # ensure consistent unit
-            if catalog[insumo]["unidad"] != unidad:
-                st.error(f"La unidad de '{insumo}' no es consistente en el catálogo (encontrado {unidad} y {catalog[insumo]['unidad']}).")
-                st.stop()
-            catalog[insumo]["opciones"].append(entry)
-
-    return catalog, df
+            pvp = 0.0
+        if insumo not in res:
+            res[insumo] = {"unidad": unidad, "opciones": []}
+        res[insumo]["opciones"].append({"ref": ref, "color": color, "pvp": pvp})
+    return res, df
 
 # =========================================
 # LOAD DATA
@@ -206,7 +179,7 @@ st.set_page_config(page_title="Megatex Cotizador", page_icon="Megatex.png", layo
 
 TABLA_DISENOS, TIPOS_CORTINA, PRECIOS_MANO_DE_OBRA, DISENOS_A_TIPOS, DF_DISENOS = load_designs_from_excel(DESIGNS_XLSX_PATH)
 BOM_DICT, DF_BOM = load_bom_from_excel(BOM_XLSX_PATH)
-CATALOGO_INSUMOS, DF_CATALOGO = load_catalog_from_excel(CATALOG_XLSX_PATH)
+CATALOGO_INSUMOS, DF_CATALOG = load_catalog_from_excel(CATALOG_XLSX_PATH)
 
 # =========================================
 # STATE
@@ -220,15 +193,13 @@ def init_state():
         st.session_state.cortinas_resumen = []
     if 'cortina_calculada' not in st.session_state:
         st.session_state.cortina_calculada = None
-    if 'editando_index' not in st.session_state:
-        st.session_state.editando_index = None
-    if 'tipo_cortina_sel' not in st.session_state:
-        st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0]
     if 'insumos_seleccion' not in st.session_state:
         st.session_state.insumos_seleccion = {}
+    if 'tipo_cortina_sel' not in st.session_state:
+        st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0]
 
 # =========================================
-# PDF
+# PDF (unchanged)
 # =========================================
 class PDF(FPDF):
     def header(self):
@@ -361,13 +332,9 @@ def pantalla_cotizador():
 
     st.markdown("---")
     st.subheader("3. Selecciona la Tela")
-    tipo_tela_sel = st.selectbox("Tipo de Tela", options=list(CATALOGO_TELAS.keys()), key="tipo_tela_sel")
-    referencias = list(CATALOGO_TELAS[tipo_tela_sel].keys())
-    ref_tela_sel = st.selectbox("Referencia", options=referencias, key="ref_tela_sel")
-    colores = [item['color'] for item in CATALOGO_TELAS[tipo_tela_sel][ref_tela_sel]]
-    color_tela_sel = st.selectbox("Color", options=colores, key="color_tela_sel")
-    tela_info = next(item for item in CATALOGO_TELAS[tipo_tela_sel][ref_tela_sel] if item['color'] == color_tela_sel)
-    st.number_input("Precio por Metro ($)", value=tela_info['pvp'], disabled=True, key="pvp_tela")
+    # Aquí asumes catálogo de telas separado; para simplificar omitimos y el PVP se puede ingresar o tomar de un catálogo fijo.
+    # Para mantener compatibilidad con versiones previas, dejamos una entrada de precio editable.
+    pvp_tela_val = st.number_input("Precio por Metro de la TELA seleccionada ($)", min_value=0, value=38000, step=1000, key="pvp_tela")
 
     st.markdown("---")
     st.subheader("4. Insumos según BOM")
@@ -392,90 +359,52 @@ def pantalla_cotizador():
             st.rerun()
 
 # =========================================
-# STATIC FABRICS (no cambian aún)
-# =========================================
-CATALOGO_TELAS = {
-    "Loneta": {
-        "NATALIA": [{"color": "MARFIL", "pvp": 38000}, {"color": "CAMEL", "pvp": 38000}, {"color": "PLATA", "pvp": 38000}],
-        "FINESTRA": [{"color": "BLANCO", "pvp": 24000}, {"color": "MARFIL", "pvp": 24000}, {"color": "CREMA", "pvp": 24000}, {"color": "LINO", "pvp": 24000}, {"color": "TAUPE", "pvp": 24000}, {"color": "ROSA", "pvp": 24000}, {"color": "PLATA", "pvp": 24000}, {"color": "GRIS", "pvp": 24000}, {"color": "INDIGO", "pvp": 24000}]
-    },
-    "Velo": {
-        "CALMA": [{"color": "MARFIL", "pvp": 44000}, {"color": "NUEZ", "pvp": 44000}, {"color": "CAMEL", "pvp": 44000}, {"color": "PLATA", "pvp": 44000}, {"color": "GRIS", "pvp": 44000}],
-        "LINK": [{"color": "BLANCO", "pvp": 26000}, {"color": "MARFIL", "pvp": 26000}, {"color": "SAHARA", "pvp": 26000}, {"color": "CAMEL", "pvp": 26000}, {"color": "TAUPE", "pvp": 26000}, {"color": "PLATA", "pvp": 26000}, {"color": "ACERO", "pvp": 26000}, {"color": "INDIGO", "pvp": 26000}]
-    },
-    "Pesada": {
-        "ECLYPSE": [{"color": "MARFIL", "pvp": 46000}, {"color": "CAPUCHINO", "pvp": 46000}, {"color": "HOJA SECA", "pvp": 46000}, {"color": "AZUL", "pvp": 46000}, {"color": "PLATA", "pvp": 46000}, {"color": "GRIS", "pvp": 46000}],
-        "POLYJACQUARD BITONO BILBAO": [{"color": "BEIGE", "pvp": 24000}, {"color": "TABACO", "pvp": 24000}, {"color": "AZUL", "pvp": 24000}, {"color": "ROSA", "pvp": 24000}, {"color": "PLATA", "pvp": 24000}, {"color": "GRIS", "pvp": 24000}]
-    },
-    "Blackout": {
-        "UNITY": [{"color": "BLANCO", "pvp": 1}, {"color": "MARFIL", "pvp": 1}, {"color": "PERLA", "pvp": 1}, {"color": "PLATA", "pvp": 1}, {"color": "TAUPE", "pvp": 1}, {"color": "INDIGO", "pvp": 1}],
-        "QUANTUM": [{"color": "BLANCO", "pvp": 26000}, {"color": "MARFIL", "pvp": 26000}, {"color": "PERLA", "pvp": 26000}, {"color": "PLATA", "pvp": 26000}, {"color": "TAUPE", "pvp": 26000}, {"color": "INDIGO", "pvp": 26000}],
-        "OCASO": [{"color": "MARFIL", "pvp": 1}, {"color": "CAMEL", "pvp": 1}, {"color": "TAUPE", "pvp": 1}, {"color": "PLATA", "pvp": 1}, {"color": "AZUL", "pvp": 1}],
-        "FLAT": [{"color": "BLANCO", "pvp": 1}, {"color": "MARFIL", "pvp": 1}, {"color": "BEIGE", "pvp": 1}, {"color": "TAUPE", "pvp": 1}, {"color": "CAMEL", "pvp": 1}, {"color": "PLATA", "pvp": 1}]
-    }
-}
-
-# =========================================
-# INSUMOS UI (BOM-driven, with dynamic catalog)
+# INSUMOS UI (BOM-driven) -- with display filter
 # =========================================
 def mostrar_insumos_bom(diseno_sel: str):
-    items = BOM_DICT.get(diseno_sel, [])
-    if not items:
+    # Reset dict for a fresh rendering
+    st.session_state.insumos_seleccion = {}
+
+    items_all = BOM_DICT.get(diseno_sel, [])
+    if not items_all:
         st.info("Este diseño no requiere insumos adicionales.")
         return
 
-    for item in items:
+    # Only display items where DependeDeSeleccion == "SI"
+    items_display = [it for it in items_all if it["DependeDeSeleccion"] == "SI"]
+
+    if not items_display:
+        st.info("Este diseño no requiere insumos adicionales para seleccionar.")
+        return
+
+    for item in items_display:
         nombre = item["Insumo"]
-        depende = (item["DependeDeSeleccion"] == "SI")
         unidad  = item["Unidad"]
 
-        # Special rule: TELA 1 se maneja desde Sección 3, no desde catálogo
-        if nombre == "TELA 1":
-            depende = False
-
         with st.container(border=True):
-            st.markdown(f"**Insumo:** {nombre}  •  **Unidad:** {unidad}")
-
-            if depende and nombre in CATALOGO_INSUMOS:
+            st.markdown(f"**Insumo:** {nombre} • **Unidad:** {unidad}")
+            if nombre in CATALOGO_INSUMOS:
                 cat = CATALOGO_INSUMOS[nombre]
-                refs = sorted({opt['ref'] for opt in cat['opciones']})
+                refs = sorted(list(set(opt['ref'] for opt in cat['opciones'])))
                 ref_key = f"ref_{nombre}"
                 color_key = f"color_{nombre}"
 
-                ref_sel = st.selectbox(f"Referencia {nombre}", options=list(refs), key=ref_key)
-                colores = sorted({opt['color'] for opt in cat['opciones'] if opt['ref'] == ref_sel})
-                color_sel = st.selectbox(f"Color {nombre}", options=list(colores), key=color_key)
+                ref_sel = st.selectbox(f"Referencia {nombre}", options=refs, key=ref_key)
+                colores = sorted(list(set(opt['color'] for opt in cat['opciones'] if opt['ref'] == ref_sel)))
+                color_sel = st.selectbox(f"Color {nombre}", options=colores, key=color_key)
 
-                # Find price
-                try:
-                    insumo_info = next(opt for opt in cat['opciones'] if opt['ref'] == ref_sel and opt['color'] == color_sel)
-                except StopIteration:
-                    st.error(f"No se encontró precio para {nombre} / {ref_sel} / {color_sel} en el catálogo.")
-                    st.stop()
-
+                insumo_info = next(opt for opt in cat['opciones'] if opt['ref'] == ref_sel and opt['color'] == color_sel)
                 st.session_state.insumos_seleccion[nombre] = {
                     "ref": ref_sel, "color": color_sel, "pvp": insumo_info["pvp"], "unidad": cat["unidad"]
                 }
-                st.number_input(f"P.V.P {nombre} ({cat['unidad']})", value=insumo_info["pvp"], disabled=True, key=f"pvp_{nombre}")
+                st.number_input(f"P.V.P {nombre} ({cat['unidad']})", value=float(insumo_info["pvp"]), disabled=True, key=f"pvp_{nombre}")
             else:
-                # NO depende de selección o no está en el catálogo
-                if nombre.startswith("M.O:"):
-                    mo_info = PRECIOS_MANO_DE_OBRA.get(nombre, {"unidad":"MT","pvp":0})
-                    pvp = mo_info["pvp"]; uni = mo_info["unidad"]
-                elif nombre in CATALOGO_INSUMOS:
-                    # Si está en catálogo pero no depende de selección, tomar primer precio como fijo
-                    opt0 = CATALOGO_INSUMOS[nombre]["opciones"][0]
-                    pvp = opt0["pvp"]; uni = CATALOGO_INSUMOS[nombre]["unidad"]
-                else:
-                    pvp = 0; uni = unidad
-
-                st.session_state.insumos_seleccion[nombre] = {
-                    "ref": "", "color": "", "pvp": pvp, "unidad": uni
-                }
-                st.number_input(f"P.V.P {nombre} ({uni})", value=pvp, disabled=True, key=f"pvp_{nombre}")
+                # If not in catalog, default pvp=0
+                st.session_state.insumos_seleccion[nombre] = {"ref":"", "color":"", "pvp":0.0, "unidad": unidad}
+                st.number_input(f"P.V.P {nombre} ({unidad})", value=0.0, disabled=True, key=f"pvp_{nombre}")
 
 # =========================================
-# CALC & SAVE
+# CALC
 # =========================================
 def calcular_y_mostrar_cotizacion():
     diseno = st.session_state.diseno_sel
@@ -487,21 +416,22 @@ def calcular_y_mostrar_cotizacion():
     detalle_insumos = []
     subtotal = 0.0
 
+    # Recorremos TODOS los items del BOM (aunque no se muestren)
     for item in BOM_DICT.get(diseno, []):
         nombre = item["Insumo"]
         unidad = item["Unidad"].upper()
         regla  = item["ReglaCantidad"].upper()
-        param  = item["Parametro"]
+        param  = item["Parametro"].strip()
 
         # Cantidad por cortina
         if regla == "MT_ANCHO_X_MULT":
-            factor = float(param) if (param not in [None, ""]) else 1.0
+            factor = float(param) if param else 1.0
             cantidad = ancho * multiplicador * factor
         elif regla == "UND_OJALES_PAR":
-            paso = float(param) if (param not in [None, ""]) else DISTANCIA_OJALES_DEF
+            paso = float(param) if param else DISTANCIA_OJALES_DEF
             cantidad = ceil_to_even((ancho * multiplicador) / paso)
         elif regla == "UND_BOTON_PAR":
-            paso = float(param) if (param not in [None, ""]) else DISTANCIA_BOTON_DEF
+            paso = float(param) if param else DISTANCIA_BOTON_DEF
             cantidad = ceil_to_even((ancho * multiplicador) / paso)
         elif regla == "FIJO":
             try:
@@ -516,17 +446,24 @@ def calcular_y_mostrar_cotizacion():
         cantidad_total = cantidad * num_cortinas
 
         # Precio unitario
-        sel = st.session_state.insumos_seleccion.get(nombre, {"pvp": 0, "unidad": unidad, "ref": "", "color": ""})
-        pvp = float(sel.get("pvp", 0))
-        uni = sel.get("unidad", unidad)
+        if nombre == "TELA 1":
+            pvp = float(st.session_state.pvp_tela)
+            uni = "MT"
+            nombre_mostrado = "TELA (seleccionada)"
+        elif item["DependeDeSeleccion"] == "SI":
+            sel = st.session_state.insumos_seleccion.get(nombre, {"pvp":0.0, "unidad":unidad, "ref":"", "color":""})
+            pvp = float(sel["pvp"]); uni = sel["unidad"]; nombre_mostrado = nombre
+        else:
+            # No depende: tomar del catálogo si existe, si no 0
+            if nombre in CATALOGO_INSUMOS:
+                opt0 = CATALOGO_INSUMOS[nombre]["opciones"][0]
+                pvp = float(opt0["pvp"]); uni = CATALOGO_INSUMOS[nombre]["unidad"]
+            else:
+                pvp = 0.0; uni = unidad
+            nombre_mostrado = nombre
 
         precio_total = pvp * cantidad_total
         subtotal += precio_total
-
-        # Mostrar tela elegida
-        nombre_mostrado = nombre
-        if nombre == "TELA 1":
-            nombre_mostrado = f"TELA: {st.session_state.ref_tela_sel} - {st.session_state.color_tela_sel}"
 
         detalle_insumos.append({
             "Insumo": nombre_mostrado,
@@ -545,7 +482,7 @@ def calcular_y_mostrar_cotizacion():
         "diseno": diseno, "multiplicador": multiplicador, "ancho": ancho, "alto": alto,
         "cantidad": num_cortinas,
         "partida": st.session_state.partida,
-        "tela": {"tipo": st.session_state.tipo_tela_sel, "referencia": st.session_state.ref_tela_sel, "color": st.session_state.color_tela_sel},
+        "tela": {"pvp": float(st.session_state.pvp_tela)},
         "insumos_seleccion": st.session_state.insumos_seleccion,
         "detalle_insumos": detalle_insumos, "subtotal": subtotal_sin_iva, "iva": iva, "total": total
     }
