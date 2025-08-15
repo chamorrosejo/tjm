@@ -11,26 +11,33 @@ import math
 # =========================================================
 SCRIPT_DIR = os.path.dirname(__file__) if "__file__" in globals() else os.getcwd()
 
-# 1) Ruta por defecto dentro del repo
-_default_path = os.path.join(SCRIPT_DIR, "data", "disenos_cortina.xlsx")
-
-# 2) Override opcional por variable de entorno o st.secrets
-_excel_from_env = os.environ.get("DESIGNS_XLSX_PATH")
+# Excel diseños (obligatorio)
+_default_designs_path = os.path.join(SCRIPT_DIR, "data", "disenos_cortina.xlsx")
+_designs_from_env = os.environ.get("DESIGNS_XLSX_PATH")
 try:
-    _excel_from_secrets = st.secrets.get("DESIGNS_XLSX_PATH")
+    _designs_from_secrets = st.secrets.get("DESIGNS_XLSX_PATH")
 except Exception:
-    _excel_from_secrets = None
+    _designs_from_secrets = None
+DESIGNS_EXCEL_PATH = _designs_from_env or _designs_from_secrets or _default_designs_path
 
-EXCEL_PATH = _excel_from_env or _excel_from_secrets or _default_path
+# Excel BOM (obligatorio también para activar BOM dinámica)
+_default_bom_path = os.path.join(SCRIPT_DIR, "data", "bom.xlsx")
+_bom_from_env = os.environ.get("BOM_XLSX_PATH")
+try:
+    _bom_from_secrets = st.secrets.get("BOM_XLSX_PATH")
+except Exception:
+    _bom_from_secrets = None
+BOM_EXCEL_PATH = _bom_from_env or _bom_from_secrets or _default_bom_path
 
-# Columnas EXACTAS requeridas en el Excel
-REQUIRED_COLUMNS = ["Diseño", "Tipo", "Multiplicador", "PVP M.O."]
+# Columnas exactas
+REQUIRED_DESIGNS_COLUMNS = ["Diseño", "Tipo", "Multiplicador", "PVP M.O."]
+REQUIRED_BOM_COLUMNS = ["Diseño", "Insumo", "Unidad", "ReglaCantidad", "Parametro", "DependeDeSeleccion", "Observaciones"]
 
 # Impuestos y parámetros
 IVA_PERCENT = 0.19
-DISTANCIA_BOTON = 0.2
-DISTANCIA_OJALES = 0.14
-PASO_RODACHIN = 0.06
+DISTANCIA_BOTON_DEF = 0.2
+DISTANCIA_OJAL_DEF = 0.14
+PASO_RODACHIN_DEF = 0.06
 
 # =========================================================
 # UTIL
@@ -39,53 +46,41 @@ def ceil_to_even(x: float) -> int:
     n = math.ceil(x)
     return n if n % 2 == 0 else n + 1
 
-def load_designs_from_excel(path: str):
-    """Lee el Excel y construye:
-      - TABLA_DISENOS: diseño -> multiplicador
-      - TIPOS_CORTINA: tipo -> [diseños]
-      - PRECIOS_MANO_DE_OBRA: "M.O: <DISEÑO>" -> {unidad,pvp}
-      - DISENOS_A_TIPOS: diseño -> [tipos]
-      - DF_DISENOS: dataframe original (para debug/uso futuro)
-    """
+def require_openpyxl():
+    try:
+        import openpyxl  # noqa: F401
+    except Exception:
+        st.error("Falta dependencia 'openpyxl'. Agrega 'openpyxl' a requirements.txt.")
+        st.stop()
+
+def read_excel_exact(path: str, required_cols: list) -> pd.DataFrame:
     if not os.path.exists(path):
         st.error(f"No se encontró el archivo Excel requerido en: {path}")
         st.stop()
-
+    require_openpyxl()
     try:
-        df = pd.read_excel(path)
+        df = pd.read_excel(path, engine="openpyxl")
     except Exception as e:
         st.error(f"No se pudo leer el Excel en {path}. Error: {e}")
         st.stop()
-
-    # Verificar columnas exactas
-    faltantes = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if faltantes:
-        st.error(
-            "El Excel debe tener exactamente estas columnas:\n"
-            + "\n".join(f"- {c}" for c in REQUIRED_COLUMNS)
-            + f"\n\nColumnas encontradas: {list(df.columns)}"
-        )
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error("El Excel debe tener estas columnas:\n" + "\n".join(f"- {c}" for c in required_cols) +
+                 f"\n\nColumnas encontradas: {list(df.columns)}")
         st.stop()
+    return df
 
-    tabla_disenos = {}          # diseño -> multiplicador
-    tipos_cortina = {}          # tipo -> [diseños]
-    precios_mo = {}             # "M.O: DISEÑO" -> {unidad,pvp}
-    disenos_a_tipos = {}        # diseño -> [tipos]
-
+def load_designs(path: str):
+    df = read_excel_exact(path, REQUIRED_DESIGNS_COLUMNS)
+    tabla_disenos = {}
+    tipos_cortina = {}
+    precios_mo = {}
+    disenos_a_tipos = {}
     for _, row in df.iterrows():
         dis = str(row["Diseño"]).strip()
         tipos = [t.strip() for t in str(row["Tipo"]).split(",") if t and str(t).strip()]
-        try:
-            mult = float(row["Multiplicador"])
-        except Exception:
-            st.error(f"Multiplicador inválido para el diseño '{dis}'. Verifica el Excel.")
-            st.stop()
-        try:
-            mo_val = float(row["PVP M.O."])
-        except Exception:
-            st.error(f"PVP M.O. inválido para el diseño '{dis}'. Verifica el Excel.")
-            st.stop()
-
+        mult = float(row["Multiplicador"])
+        mo_val = float(row["PVP M.O."])
         tabla_disenos[dis] = mult
         precios_mo[f"M.O: {dis}"] = {"unidad": "MT", "pvp": mo_val}
         disenos_a_tipos.setdefault(dis, [])
@@ -95,23 +90,76 @@ def load_designs_from_excel(path: str):
                 tipos_cortina[t].append(dis)
             if t not in disenos_a_tipos[dis]:
                 disenos_a_tipos[dis].append(t)
-
     if not tabla_disenos or not tipos_cortina:
-        st.error("El Excel no contiene filas válidas para diseños y tipos.")
+        st.error("El Excel de diseños no contiene filas válidas.")
         st.stop()
-
     return tabla_disenos, tipos_cortina, precios_mo, disenos_a_tipos, df
 
+def load_bom(path: str):
+    df = read_excel_exact(path, REQUIRED_BOM_COLUMNS)
+    # Normalizar DependeDeSeleccion a "SI"/"NO"
+    df["DependeDeSeleccion"] = df["DependeDeSeleccion"].astype(str).str.upper().str.strip().replace({"SÍ":"SI"})
+    return df
+
 # =========================================================
-# CARGA DE DISEÑOS (OBLIGATORIA)
+# CARGA DE EXCELS
 # =========================================================
 st.set_page_config(page_title="Megatex Cotizador", page_icon="Megatex.png", layout="wide")
-
-TABLA_DISENOS, TIPOS_CORTINA, PRECIOS_MANO_DE_OBRA, DISENOS_A_TIPOS, DF_DISENOS = load_designs_from_excel(EXCEL_PATH)
+TABLA_DISENOS, TIPOS_CORTINA, PRECIOS_MANO_DE_OBRA, DISENOS_A_TIPOS, DF_DISENOS = load_designs(DESIGNS_EXCEL_PATH)
+DF_BOM = load_bom(BOM_EXCEL_PATH)
 
 # =========================================================
-# CATÁLOGOS INDEPENDIENTES DEL EXCEL
+# CATÁLOGOS (para insumos seleccionables)
 # =========================================================
+CATALOGO_INSUMOS = {
+    "BOTON": {"unidad": "UND", "opciones": [
+        {"ref": "MADERA", "color": "CAOBA", "pvp": 1000},
+        {"ref": "MADERA", "color": "NATURAL", "pvp": 1000},
+        {"ref": "PLASTICO", "color": "BLANCO", "pvp": 500},
+        {"ref": "PLASTICO", "color": "NEGRO", "pvp": 500}
+    ]},
+    "ARGOLLA PLASTICA": {"unidad": "UND", "opciones": [
+        {"ref": "1 PULGADA", "color": "PLATA", "pvp": 2000},
+        {"ref": "1 PULGADA", "color": "DORADO", "pvp": 2200},
+        {"ref": "1.5 PULGADAS", "color": "PLATA", "pvp": 2500}
+    ]},
+    "ARGOLLA METALICA": {"unidad": "UND", "opciones": [
+        {"ref": "INOX 1 PULGADA", "color": "PLATA", "pvp": 3000},
+        {"ref": "INOX 1 PULGADA", "color": "NEGRO MATE", "pvp": 3500},
+        {"ref": "INOX 1.5 PULGADAS", "color": "PLATA", "pvp": 4000}
+    ]},
+    "REATA 3/4": {"unidad": "MT", "opciones": [
+        {"ref": "ALGODON", "color": "BLANCO", "pvp": 6000},
+        {"ref": "ALGODON", "color": "CRUDO", "pvp": 6000},
+        {"ref": "POLIESTER", "color": "BLANCO", "pvp": 5500}
+    ]},
+    "REATA DE REFUERZO": {"unidad": "MT", "opciones": [
+        {"ref": "ESTANDAR", "color": "TRANSPARENTE", "pvp": 2000},
+        {"ref": "PREMIUM", "color": "TRANSPARENTE", "pvp": 3000}
+    ]},
+    "REATA BROCHES": {"unidad": "MT", "opciones": [
+        {"ref": "PLASTICO", "color": "TRANSPARENTE", "pvp": 6000},
+        {"ref": "TELA", "color": "BLANCO", "pvp": 7000}
+    ]},
+    "RODACHINES REATA BROCHES": {"unidad": "UND", "opciones": [
+        {"ref": "PLASTICO", "color": "BLANCO", "pvp": 750},
+        {"ref": "SILICONA", "color": "TRANSPARENTE", "pvp": 900}
+    ]},
+    "REATA ITALIANA": {"unidad": "MT", "opciones": [
+        {"ref": "ESTANDAR", "color": "BLANCO", "pvp": 3500},
+        {"ref": "REFORZADA", "color": "BLANCO", "pvp": 4500}
+    ]},
+    "RODACHINES REATA ITALIANA": {"unidad": "UND", "opciones": [
+        {"ref": "ITALIANO", "color": "BLANCO", "pvp": 750},
+        {"ref": "PREMIUM", "color": "GRIS", "pvp": 1000}
+    ]},
+    "UÑETA REATA ITALIANA": {"unidad": "UND", "opciones": [
+        {"ref": "PLASTICA", "color": "BLANCO", "pvp": 500},
+        {"ref": "METALICA", "color": "CROMADO", "pvp": 800}
+    ]}
+}
+
+# Telas (catálogo)
 CATALOGO_TELAS = {
     "Loneta": {
         "NATALIA": [{"color": "MARFIL", "pvp": 38000}, {"color": "CAMEL", "pvp": 38000}, {"color": "PLATA", "pvp": 38000}],
@@ -133,31 +181,6 @@ CATALOGO_TELAS = {
     }
 }
 
-# BOM (por ahora estático; lo actualizaremos luego)
-BOM = {
-    "TUBULAR": ["TELA 1", "M.O: TUBULAR"], "PRESILLAS SIN BOTON": ["TELA 1", "M.O: PRESILLAS SIN BOTON"],
-    "PRESILLAS CON BOTON": ["TELA 1", "BOTON", "M.O: PRESILLAS CON BOTON"], "REATA 3/4": ["TELA 1", "REATA 3/4", "M.O: REATA 3/4"],
-    "ONDA MODERNA REATA BROCHES": ["TELA 1", "REATA DE REFUERZO", "REATA BROCHES", "RODACHINES REATA BROCHES", "M.O: ONDA MODERNA REATA BROCHES"],
-    "ONDA MODERNA REATA ITALIANA": ["TELA 1", "REATA ITALIANA", "RODACHINES REATA ITALIANA", "UÑETA REATA ITALIANA", "M.O: ONDA MODERNA REATA ITALIANA"],
-    "ARGOLLA PLASTICA": ["TELA 1", "REATA DE REFUERZO", "ARGOLLA PLASTICA", "M.O: ARGOLLA PLASTICA"],
-    "ARGOLLA METALICA": ["TELA 1", "REATA DE REFUERZO", "ARGOLLA METALICA", "M.O: ARGOLLA METALICA"],
-    "3 PLIEGUES": ["TELA 1", "M.O: 3 PLIEGUES"], "TUBULAR BOLERO RECTO": ["TELA 1", "M.O: TUBULAR BOLERO RECTO"],
-    "TUBULAR BOLERO ONDAS": ["TELA 1", "M.O: TUBULAR BOLERO ONDAS"]
-}
-
-CATALOGO_INSUMOS = {
-    "BOTON": {"unidad": "UND", "opciones": [{"ref": "MADERA", "color": "CAOBA", "pvp": 1000}, {"ref": "MADERA", "color": "NATURAL", "pvp": 1000}, {"ref": "PLASTICO", "color": "BLANCO", "pvp": 500}, {"ref": "PLASTICO", "color": "NEGRO", "pvp": 500}]},
-    "ARGOLLA PLASTICA": {"unidad": "UND", "opciones": [{"ref": "1 PULGADA", "color": "PLATA", "pvp": 2000}, {"ref": "1 PULGADA", "color": "DORADO", "pvp": 2200}, {"ref": "1.5 PULGADAS", "color": "PLATA", "pvp": 2500}]},
-    "ARGOLLA METALICA": {"unidad": "UND", "opciones": [{"ref": "INOX 1 PULGADA", "color": "PLATA", "pvp": 3000}, {"ref": "INOX 1 PULGADA", "color": "NEGRO MATE", "pvp": 3500}, {"ref": "INOX 1.5 PULGADAS", "color": "PLATA", "pvp": 4000}]},
-    "REATA 3/4": {"unidad": "MT", "opciones": [{"ref": "ALGODON", "color": "BLANCO", "pvp": 6000}, {"ref": "ALGODON", "color": "CRUDO", "pvp": 6000}, {"ref": "POLIESTER", "color": "BLANCO", "pvp": 5500}]},
-    "REATA DE REFUERZO": {"unidad": "MT", "opciones": [{"ref": "ESTANDAR", "color": "TRANSPARENTE", "pvp": 2000}, {"ref": "PREMIUM", "color": "TRANSPARENTE", "pvp": 3000}]},
-    "REATA BROCHES": {"unidad": "MT", "opciones": [{"ref": "PLASTICO", "color": "TRANSPARENTE", "pvp": 6000}, {"ref": "TELA", "color": "BLANCO", "pvp": 7000}]},
-    "RODACHINES REATA BROCHES": {"unidad": "UND", "opciones": [{"ref": "PLASTICO", "color": "BLANCO", "pvp": 750}, {"ref": "SILICONA", "color": "TRANSPARENTE", "pvp": 900}]},
-    "REATA ITALIANA": {"unidad": "MT", "opciones": [{"ref": "ESTANDAR", "color": "BLANCO", "pvp": 3500}, {"ref": "REFORZADA", "color": "BLANCO", "pvp": 4500}]},
-    "RODACHINES REATA ITALIANA": {"unidad": "UND", "opciones": [{"ref": "ITALIANO", "color": "BLANCO", "pvp": 750}, {"ref": "PREMIUM", "color": "GRIS", "pvp": 1000}]},
-    "UÑETA REATA ITALIANA": {"unidad": "UND", "opciones": [{"ref": "PLASTICA", "color": "BLANCO", "pvp": 500}, {"ref": "METALICA", "color": "CROMADO", "pvp": 800}]}
-}
-
 # =========================================================
 # ESTADO
 # =========================================================
@@ -174,6 +197,8 @@ def init_state():
         st.session_state.editando_index = None
     if 'tipo_cortina_sel' not in st.session_state:
         st.session_state.tipo_cortina_sel = list(TIPOS_CORTINA.keys())[0]
+    if 'insumos_bom' not in st.session_state:
+        st.session_state.insumos_bom = {}
 
 # =========================================================
 # PDF
@@ -206,8 +231,9 @@ class PDF(FPDF):
 def sidebar():
     with st.sidebar:
         st.title("Megatex Cotizador")
-        st.caption(f"Fuente de datos: {EXCEL_PATH}")
-        if st.button("Recargar Excel"):
+        st.caption(f"Diseños: {DESIGNS_EXCEL_PATH}")
+        st.caption(f"BOM: {BOM_EXCEL_PATH}")
+        if st.button("Recargar archivos"):
             st.cache_data.clear()
             st.cache_resource.clear()
             st.rerun()
@@ -238,6 +264,33 @@ def pantalla_datos():
         vendedor = st.session_state.datos_cotizacion['vendedor']
         vendedor['nombre'] = st.text_input("Nombre Vendedor:", value=vendedor.get('nombre', ''))
         vendedor['telefono'] = st.text_input("Teléfono Vendedor:", value=vendedor.get('telefono', ''))
+
+def render_insumos_bom(disenio_sel: str, ancho: float, multiplicador: float):
+    st.subheader("4. Insumos según BOM")
+    df = DF_BOM[DF_BOM["Diseño"].astype(str) == str(disenio_sel)]
+    if df.empty:
+        st.info("No hay filas en el BOM para este diseño.")
+        return
+    if 'insumos_bom' not in st.session_state:
+        st.session_state.insumos_bom = {}
+    # Mostrar selectores para los insumos con DependeDeSeleccion == SI
+    for _, row in df.iterrows():
+        insumo = str(row["Insumo"]).strip()
+        depende = str(row["DependeDeSeleccion"]).upper().strip()
+        if depende == "SI" and insumo in CATALOGO_INSUMOS:
+            with st.container(border=True):
+                st.markdown(f"**{insumo}**")
+                catalogo = CATALOGO_INSUMOS[insumo]
+                refs = sorted(set(opt['ref'] for opt in catalogo['opciones']))
+                key_prefix = f"{disenio_sel}_{insumo}"
+                ref_sel = st.selectbox("Referencia", options=list(refs), key=f"ref_{key_prefix}")
+                colores = sorted(set(opt['color'] for opt in catalogo['opciones'] if opt['ref'] == ref_sel))
+                color_sel = st.selectbox("Color", options=list(colores), key=f"color_{key_prefix}")
+                info = next(opt for opt in catalogo['opciones'] if opt['ref'] == ref_sel and opt['color'] == color_sel)
+                st.number_input("Precio unitario ($)", value=info['pvp'], disabled=True, key=f"pvp_{key_prefix}")
+                st.session_state.insumos_bom[insumo] = {"ref": ref_sel, "color": color_sel, "pvp": info["pvp"], "unidad": catalogo["unidad"]}
+        elif depende == "SI" and insumo not in CATALOGO_INSUMOS:
+            st.warning(f"{insumo}: marcado como 'DependeDeSeleccion' pero no está en CATALOGO_INSUMOS.")
 
 def pantalla_resumen():
     st.header("Resumen de la Cotización")
@@ -297,7 +350,7 @@ def pantalla_cotizador():
     # 2.2 Diseño filtrado por el tipo seleccionado
     disenos_disponibles = TIPOS_CORTINA.get(tipo_cortina_sel, [])
     if not disenos_disponibles:
-        st.error("No hay diseños disponibles para el tipo seleccionado. Verifica el Excel.")
+        st.error("No hay diseños disponibles para el tipo seleccionado. Verifica el Excel de diseños.")
         st.stop()
 
     diseno_previo = st.session_state.get("diseno_sel", disenos_disponibles[0])
@@ -324,6 +377,10 @@ def pantalla_cotizador():
     tela_info = next(item for item in CATALOGO_TELAS[tipo_tela_sel][ref_tela_sel] if item['color'] == color_tela_sel)
     st.number_input("Precio por Metro ($)", value=tela_info['pvp'], disabled=True, key="pvp_tela")
 
+    # 4. Insumos según BOM (selectores si corresponde)
+    st.markdown("---")
+    render_insumos_bom(diseno_sel, ancho, multiplicador)
+
     st.markdown("---")
     if st.button("Calcular Cotización", type="primary"):
         calcular_y_mostrar_cotizacion()
@@ -346,6 +403,36 @@ def pantalla_cotizador():
 # =========================================================
 # LÓGICA
 # =========================================================
+def calcular_cantidad(row, ancho, multiplicador):
+    regla = str(row["ReglaCantidad"]).upper().strip()
+    unidad = str(row["Unidad"]).upper().strip()
+    param_raw = str(row["Parametro"]).strip()
+    # Interpretar parámetro numérico cuando aplica
+    try:
+        param = float(param_raw) if param_raw not in ("", "nan", "None") else None
+    except Exception:
+        param = None
+
+    if regla == "MT_ANCHO_X_MULT":
+        return ancho * multiplicador  # metros
+    elif regla == "UND_OJALES_PAR":
+        dist = param or DISTANCIA_OJAL_DEF
+        return ceil_to_even((ancho * multiplicador) / dist)  # unidades
+    elif regla == "UND_BOTON_PAR":
+        dist = param or DISTANCIA_BOTON_DEF
+        return ceil_to_even((ancho * multiplicador) / dist)  # unidades
+    elif regla == "UND_PASO_RODACHIN":
+        paso = param or PASO_RODACHIN_DEF
+        return math.ceil((ancho * multiplicador) / paso)     # unidades
+    elif regla == "FIJO":
+        if param is None:
+            st.error(f"Regla FIJO requiere 'Parametro' numérico. Fila: {row.to_dict()}")
+            st.stop()
+        return param
+    else:
+        st.error(f"ReglaCantidad desconocida: {regla}")
+        st.stop()
+
 def calcular_y_mostrar_cotizacion():
     diseno = st.session_state.diseno_sel
     ancho = st.session_state.ancho
@@ -354,14 +441,9 @@ def calcular_y_mostrar_cotizacion():
     num_cortinas = st.session_state.cantidad
 
     detalle_insumos = []
-    subtotal = 0
+    subtotal = 0.0
 
-    # Mano de obra según el diseño (obligatoria desde Excel)
-    mo_key = f"M.O: {diseno}"
-    mo_info = PRECIOS_MANO_DE_OBRA.get(mo_key, {"unidad": "MT", "pvp": 0})
-    pvp_mo = mo_info["pvp"]
-
-    # TELA 1
+    # Tela (siempre)
     cant_tela = ancho * multiplicador * num_cortinas
     pvp_tela = st.session_state.pvp_tela
     precio_tela = cant_tela * pvp_tela
@@ -372,14 +454,54 @@ def calcular_y_mostrar_cotizacion():
         "P.V.P/Unit ($)": f"${pvp_tela:,.2f}", "Precio ($)": f"${precio_tela:,.2f}"
     })
 
-    # Mano de obra (por metro)
-    cant_mo = ancho * multiplicador * num_cortinas
-    precio_mo = cant_mo * pvp_mo
-    subtotal += precio_mo
-    detalle_insumos.append({
-        "Insumo": mo_key, "Cantidad": f"{cant_mo:.2f}", "Unidad": "MT",
-        "P.V.P/Unit ($)": f"${pvp_mo:,.2f}", "Precio ($)": f"${precio_mo:,.2f}"
-    })
+    # Insumos según BOM
+    df_rows = DF_BOM[DF_BOM["Diseño"].astype(str) == str(diseno)]
+    for _, row in df_rows.iterrows():
+        insumo = str(row["Insumo"]).strip()
+        unidad = str(row["Unidad"]).upper().strip()
+
+        if insumo == "TELA 1":
+            # Ya añadido arriba (evitar duplicado)
+            continue
+
+        cantidad_por_cortina = calcular_cantidad(row, ancho, multiplicador)
+        cantidad_total = cantidad_por_cortina * num_cortinas
+
+        # Precio unitario (si depende de selección, tomar del catálogo + selección del usuario)
+        if str(row["DependeDeSeleccion"]).upper().strip() == "SI" and insumo in CATALOGO_INSUMOS:
+            sel = st.session_state.insumos_bom.get(insumo)
+            if not sel:
+                st.error(f"Falta seleccionar opciones para el insumo: {insumo}")
+                st.stop()
+            pvp = sel["pvp"]
+            nombre_mostrado = f"{insumo} ({sel['ref']} - {sel['color']})"
+            unidad = sel["unidad"]
+        elif insumo.startswith("M.O:"):
+            pinfo = PRECIOS_MANO_DE_OBRA.get(insumo, {"unidad": "MT", "pvp": 0})
+            pvp = pinfo["pvp"]
+            unidad = pinfo["unidad"]
+            nombre_mostrado = insumo
+        else:
+            # Insumo fijo no seleccionable -> si existe en catálogo tomar primer precio, si no, pvp=0
+            if insumo in CATALOGO_INSUMOS:
+                primera = CATALOGO_INSUMOS[insumo]["opciones"][0]
+                pvp = primera["pvp"]
+                unidad = CATALOGO_INSUMOS[insumo]["unidad"]
+                nombre_mostrado = f"{insumo} ({primera['ref']} - {primera['color']})"
+            else:
+                pvp = 0
+                nombre_mostrado = insumo
+
+        precio_total = cantidad_total * pvp
+        subtotal += precio_total
+
+        detalle_insumos.append({
+            "Insumo": nombre_mostrado,
+            "Cantidad": (f"{int(cantidad_total)}" if unidad == "UND" else f"{cantidad_total:.2f}"),
+            "Unidad": unidad,
+            "P.V.P/Unit ($)": f"${pvp:,.2f}",
+            "Precio ($)": f"${precio_total:,.2f}"
+        })
 
     total = subtotal
     iva = total * IVA_PERCENT
@@ -391,7 +513,7 @@ def calcular_y_mostrar_cotizacion():
         "cantidad": num_cortinas,
         "partida": st.session_state.partida,
         "tela": {"tipo": st.session_state.tipo_tela_sel, "referencia": st.session_state.ref_tela_sel, "color": st.session_state.color_tela_sel},
-        "insumos_seleccion": {},
+        "insumos_seleccion": st.session_state.insumos_bom,
         "detalle_insumos": detalle_insumos, "subtotal": subtotal_sin_iva, "iva": iva, "total": total
     }
 
