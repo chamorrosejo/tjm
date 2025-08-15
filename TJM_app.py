@@ -9,12 +9,6 @@ import math
 # =======================
 # Helpers
 # =======================
-def money(n):
-    try:
-        return f"${float(n):,.0f}"
-    except Exception:
-        return "$0"
-
 def _safe_float(val, default=0.0):
     try:
         if val is None:
@@ -31,6 +25,12 @@ def ceil_to_even(x: float) -> int:
     n = math.ceil(x)
     return n if n % 2 == 0 else n + 1
 
+def money(n: float) -> str:
+    try:
+        return f"${int(round(float(n))):,}".replace(",", ".") if False else f"${int(round(float(n))):,}"
+    except Exception:
+        return "$0"
+
 # =======================
 # Paths & constants
 # =======================
@@ -41,10 +41,10 @@ _default_bom     = os.path.join(SCRIPT_DIR, "data", "bom.xlsx")
 _default_cat_ins = os.path.join(SCRIPT_DIR, "data", "catalogo_insumos.xlsx")
 _default_cat_tel = os.path.join(SCRIPT_DIR, "data", "catalogo_telas.xlsx")
 
-DESIGNS_XLSX_PATH      = os.environ.get("DESIGNS_XLSX_PATH")       or st.secrets.get("DESIGNS_XLSX_PATH", _default_designs)
-BOM_XLSX_PATH          = os.environ.get("BOM_XLSX_PATH")           or st.secrets.get("BOM_XLSX_PATH", _default_bom)
-CATALOG_XLSX_PATH      = os.environ.get("CATALOG_XLSX_PATH")       or st.secrets.get("CATALOG_XLSX_PATH", _default_cat_ins)
-CATALOG_TELAS_XLSX_PATH= os.environ.get("CATALOG_TELAS_XLSX_PATH") or st.secrets.get("CATALOG_TELAS_XLSX_PATH", _default_cat_tel)
+DESIGNS_XLSX_PATH       = os.environ.get("DESIGNS_XLSX_PATH")       or st.secrets.get("DESIGNS_XLSX_PATH", _default_designs)
+BOM_XLSX_PATH           = os.environ.get("BOM_XLSX_PATH")           or st.secrets.get("BOM_XLSX_PATH", _default_bom)
+CATALOG_XLSX_PATH       = os.environ.get("CATALOG_XLSX_PATH")       or st.secrets.get("CATALOG_XLSX_PATH", _default_cat_ins)
+CATALOG_TELAS_XLSX_PATH = os.environ.get("CATALOG_TELAS_XLSX_PATH") or st.secrets.get("CATALOG_TELAS_XLSX_PATH", _default_cat_tel)
 
 REQUIRED_DESIGNS_COLS = ["Diseño", "Tipo", "Multiplicador", "PVP M.O."]
 REQUIRED_BOM_COLS     = ["Diseño", "Insumo", "Unidad", "ReglaCantidad", "Parametro", "DependeDeSeleccion", "Observaciones"]
@@ -103,7 +103,6 @@ def load_bom_from_excel(path: str):
         st.error(f"El Excel de BOM debe tener columnas: {REQUIRED_BOM_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
 
-    # Validar reglas
     reglas_invalidas = sorted(set(str(x).strip().upper() for x in df["ReglaCantidad"]) - ALLOWED_RULES)
     if reglas_invalidas:
         st.error("Reglas no soportadas en 'ReglaCantidad': " + ", ".join(reglas_invalidas))
@@ -131,12 +130,11 @@ def load_bom_from_excel(path: str):
 
 def load_catalog_from_excel(path: str):
     if not os.path.exists(path):
-        st.warning(f"No se encontró el catálogo de insumos en: {path}. Solo se usarán TELA 1/2 y M.O.")
         return {}
     df = pd.read_excel(path, engine="openpyxl")
     faltantes = [c for c in REQUIRED_CAT_COLS if c not in df.columns]
     if faltantes:
-        st.error(f"El catálogo debe tener columnas: {REQUIRED_CAT_COLS}. Encontradas: {list(df.columns)}")
+        st.error(f"El catálogo de insumos debe tener columnas: {REQUIRED_CAT_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
 
     catalog = {}
@@ -162,7 +160,7 @@ def load_telas_from_excel(path: str):
         st.error(f"El catálogo de telas debe tener columnas: {REQUIRED_TELAS_COLS}. Encontradas: {list(df.columns)}")
         st.stop()
 
-    telas = {}
+    telas = {}  # {TipoTela: {Referencia: [{"color":..., "pvp":...}, ...]}}
     for _, row in df.iterrows():
         tipo = str(row["TipoTela"]).strip()
         ref = str(row["Referencia"]).strip()
@@ -174,39 +172,18 @@ def load_telas_from_excel(path: str):
     return telas
 
 # =======================
-# PDF (placeholder unchanged)
-# =======================
-class PDF(FPDF):
-    def header(self):
-        try:
-            logo_path = os.path.join(SCRIPT_DIR, "Megatex.png")
-            self.image(logo_path, 10, 8, 33)
-        except Exception:
-            pass
-        self.set_font('Arial', 'B', 20)
-        self.set_text_color(0, 80, 180)
-        self.cell(0, 10, 'Cotización', 0, 1, 'R')
-        self.set_font('Arial', '', 10)
-        self.set_text_color(128)
-        self.cell(0, 5, f"Fecha: {datetime.now().strftime('%Y-%m-%d')}", 0, 1, 'R')
-        self.cell(0, 5, f"Cotización #: {datetime.now().strftime('%Y%m%d%H%M')}", 0, 1, 'R')
-        self.ln(10)
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.set_text_color(128)
-        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'R')
-
-# =======================
 # App state & UI
 # =======================
-st.set_page_config(page_title="Megatex Cotizador", page_icon="Megatex.png", layout="wide")
+st.set_page_config(page_title="Megatex Cotizador", page_icon="🧵", layout="wide")
 
-# Global CSS for red buttons
+# CSS botones rojos
 st.markdown("""
 <style>
-div.stButton > button[kind="primary"] {background-color: #d01818; color: white;}
-div.stButton > button {background-color: #d01818; color: white;}
+div.stButton > button:first-child {
+  background-color: #d92828 !important;
+  color: white !important;
+  border: 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -231,10 +208,8 @@ def sidebar():
     st.title("Megatex Cotizador")
     st.caption(f"Diseños: {DESIGNS_XLSX_PATH}")
     st.caption(f"BOM: {BOM_XLSX_PATH}")
-    st.caption(f"Catálogo insumos: {CATALOG_XLSX_PATH}")
+    st.caption(f"Catálogo insumos: {CATALOG_XLSX_PATH or '—'}")
     st.caption(f"Catálogo telas: {CATALOG_TELAS_XLSX_PATH}")
-    if st.button("Recargar datos"):
-        st.cache_data.clear(); st.cache_resource.clear(); st.rerun()
     st.divider()
     if st.button("Crear Cotización", use_container_width=True):
         st.session_state.editando_index = None
@@ -289,9 +264,8 @@ def pantalla_cotizador():
         colores = [x["color"] for x in CATALOGO_TELAS[tipo][ref]]
         color = st.selectbox(f"Color {prefix}", options=colores, key=color_key)
         info = next(x for x in CATALOGO_TELAS[tipo][ref] if x["color"] == color)
-        # Show money format but keep numeric in state
-        st.number_input(f"PVP/Metro TELA {prefix} ($)", value=info["pvp"], disabled=True, key=pvp_key, format="%d")
-        st.caption(f"Precio: {money(info['pvp'])}")
+        st.text_input(f"PVP/Metro TELA {prefix}", value=money(info["pvp"]), disabled=True, key=pvp_key)
+
         # Modo de confección por tela
         st.radio(f"Modo de confección {prefix}", options=["Entera", "Partida", "Semipartida"], horizontal=True, key=modo_key)
 
@@ -307,34 +281,33 @@ def pantalla_cotizador():
     st.subheader("4. Insumos según BOM")
     mostrar_insumos_bom(diseno_sel)
 
-    if st.button("Calcular cotización", type="primary"):
+    if st.button("Calcular cotización"):
         calcular_y_mostrar_cotizacion()
 
     if st.session_state.get('cortina_calculada'):
         st.success("Cálculo realizado. Revisa los detalles a continuación.")
-        # Build DataFrame with money formatting
-        det = st.session_state.cortina_calculada['detalle_insumos']
-        df_detalle = pd.DataFrame(det)
+        df_detalle = pd.DataFrame(st.session_state.cortina_calculada['detalle_insumos'])
+
+        # Formateo $ en tabla
         if not df_detalle.empty:
-            df_show = df_detalle.copy()
-            if "P.V.P/Unit ($)" in df_show.columns:
-                df_show["P.V.P/Unit ($)"] = df_show["P.V.P/Unit ($)"].apply(money)
-            if "Precio ($)" in df_show.columns:
-                df_show["Precio ($)"] = df_show["Precio ($)"].apply(money)
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            if "P.V.P/Unit ($)" in df_detalle.columns:
+                df_detalle["P.V.P/Unit ($)"] = df_detalle["P.V.P/Unit ($)"].apply(money)
+            if "Precio ($)" in df_detalle.columns:
+                df_detalle["Precio ($)"] = df_detalle["Precio ($)"].apply(money)
+
+        st.dataframe(df_detalle, use_container_width=True, hide_index=True)
         c1, c2, c3 = st.columns(3)
         c1.metric("Subtotal Cortina", money(st.session_state.cortina_calculada['subtotal']))
         c2.metric("IVA Cortina", money(st.session_state.cortina_calculada['iva']))
         c3.metric("Total Cortina", money(st.session_state.cortina_calculada['total']))
 
-        # Guardar cortina (rojo)
         if st.button("Guardar cortina"):
-            # Append a copy to resumen
+            # Guardar copia inmutable de la cortina
             st.session_state.cortinas_resumen.append(st.session_state.cortina_calculada.copy())
-            st.success("✅ Cortina guardada en la cotización. Ve a 'Ver Resumen Final' para verla en el listado.")
+            st.success("✅ Cortina guardada en la cotización. Ve a 'Ver Resumen Final'.")
 
 def mostrar_insumos_bom(diseno_sel: str):
-    # Solo mostrar los que requieren selección
+    # Sólo mostrar los que requieren selección
     items = [it for it in BOM_DICT.get(diseno_sel, []) if it["DependeDeSeleccion"] == "SI"]
     if not items:
         st.info("Este diseño no requiere insumos adicionales para seleccionar.")
@@ -347,17 +320,18 @@ def mostrar_insumos_bom(diseno_sel: str):
             st.markdown(f"**Insumo:** {nombre}  •  **Unidad:** {unidad}")
             if nombre in CATALOGO_INSUMOS:
                 cat = CATALOGO_INSUMOS[nombre]
-                refs = sorted(list({opt['ref'] for opt in cat['opciones']}))
+                refs = sorted({opt['ref'] for opt in cat['opciones']})
                 ref_key = f"ref_{nombre}"
                 color_key = f"color_{nombre}"
                 ref_sel = st.selectbox(f"Referencia {nombre}", options=refs, key=ref_key)
-                colores = sorted(list({opt['color'] for opt in cat['opciones']} if opt['ref'] == ref_sel))
+                colores = sorted({opt['color'] for opt in cat['opciones'] if opt.get('ref') == ref_sel}) or ["No disponible"]
                 color_sel = st.selectbox(f"Color {nombre}", options=colores, key=color_key)
-                insumo_info = next(opt for opt in cat['opciones'] if opt['ref'] == ref_sel and opt['color'] == color_sel)
-                st.number_input(f"P.V.P {nombre} ({cat['unidad']})", value=insumo_info["pvp"], disabled=True, key=f"pvp_{nombre}", format="%d")
-                st.caption(f"P.V.P: {money(insumo_info['pvp'])}")
+                match = [opt for opt in cat['opciones'] if opt.get('ref') == ref_sel and opt.get('color') == color_sel]
+                pvp_val = match[0]["pvp"] if match else 0.0
+                st.text_input(f"P.V.P {nombre} ({cat['unidad']})", value=money(pvp_val), disabled=True, key=f"pvp_{nombre}")
+                # Guardar selección
                 st.session_state.setdefault("insumos_seleccion", {})
-                st.session_state.insumos_seleccion[nombre] = {"ref": ref_sel, "color": color_sel, "pvp": insumo_info["pvp"], "unidad": cat["unidad"]}
+                st.session_state.insumos_seleccion[nombre] = {"ref": ref_sel, "color": color_sel, "pvp": pvp_val, "unidad": cat["unidad"]}
             else:
                 st.warning(f"{nombre}: marcado como 'DependeDeSeleccion' pero no está en el Catálogo de Insumos.")
 
@@ -378,7 +352,7 @@ def calcular_y_mostrar_cotizacion():
         regla  = item["ReglaCantidad"].upper()
         param  = item["Parametro"]
 
-        # --- Cantidad por cortina ---
+        # Cantidad por cortina
         if regla == "MT_ANCHO_X_MULT":
             factor = _safe_float(param, 1.0)
             cantidad = ancho * multiplicador * factor
@@ -396,7 +370,7 @@ def calcular_y_mostrar_cotizacion():
 
         cantidad_total = cantidad * num_cortinas
 
-        # --- PVP según insumo ---
+        # PVP según insumo
         if nombre == "TELA 1":
             pvp = _safe_float(st.session_state.get("pvp_tela_1"), 0.0)
             ref = st.session_state.get("ref_tela_sel_1", "")
@@ -428,7 +402,7 @@ def calcular_y_mostrar_cotizacion():
             "Precio ($)": round(precio_total, 2),
         })
 
-    # --- Mano de Obra (línea independiente) ---
+    # Mano de Obra (línea independiente)
     mo_key_candidates = [f"M.O: {diseno}", f"M.O. {diseno}"]
     mo_info = None
     mo_key = None
@@ -452,7 +426,6 @@ def calcular_y_mostrar_cotizacion():
     total = round(subtotal, 2)
     subtotal_sin_iva = round(total - iva, 2)
 
-    # Adjuntar modos de confección por tela
     tela_info = {
         "tela1": {
             "tipo": st.session_state.get("tipo_tela_sel_1", ""),
@@ -497,25 +470,6 @@ def pantalla_datos():
         vendedor['nombre'] = st.text_input("Nombre Vendedor:", value=vendedor.get('nombre', ''))
         vendedor['telefono'] = st.text_input("Teléfono Vendedor:", value=vendedor.get('telefono', ''))
 
-def _render_insumos_bullets(cortina: dict) -> str:
-    """Build markdown bullets for insumos, including tela modes."""
-    lines = []
-    # First, try to list TELA 1 and TELA 2 explicitly if present in detalle
-    for d in cortina.get("detalle_insumos", []):
-        name = str(d.get("Insumo",""))
-        qty = d.get("Cantidad","")
-        unit = d.get("Unidad","")
-        if name.upper().startswith("TELA 1"):
-            modo = cortina.get("telas",{}).get("tela1",{}).get("modo_confeccion","")
-            if modo:
-                name = name + f" [{modo}]"
-        if name.upper().startswith("TELA 2"):
-            modo = cortina.get("telas",{}).get("tela2",{}).get("modo_confeccion","")
-            if modo:
-                name = name + f" [{modo}]"
-        lines.append(f"- **{name}** — {qty} {unit}")
-    return "\n".join(lines)
-
 def pantalla_resumen():
     st.header("Resumen de la Cotización")
     cliente = st.session_state.datos_cotizacion['cliente']
@@ -538,15 +492,29 @@ def pantalla_resumen():
     else:
         for i, cortina in enumerate(st.session_state.cortinas_resumen):
             with st.container(border=True):
-                c1, c2, c3, c4 = st.columns([0.6, 2.6, 2.0, 1.0])
+                c1, c2, c3, c4 = st.columns([0.6, 3.0, 2.8, 1.2])
                 c1.markdown(f"**{i+1}**")
-                # Col 2: Diseño + bullets
-                col2_md = f"**{cortina['diseno']}**\n\n{_render_insumos_bullets(cortina)}"
-                c2.markdown(col2_md)
-                # Col 3: Dimensiones + Cantidad
-                dims = f"Dimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} × {cortina['alto']:.2f} m • Cant: {cortina['cantidad']}"
-                c3.write(dims)
-                # Col 4: Total
+                # Columna 2: diseño + bullets de insumos
+                bullets = []
+                # Enriquecer TELAS con [modo] si existe
+                tela1_modo = cortina.get("telas", {}).get("tela1", {}).get("modo_confeccion", "")
+                tela2_modo = cortina.get("telas", {}).get("tela2", {}).get("modo_confeccion", "") if cortina.get("telas", {}).get("tela2") else ""
+                for item in cortina["detalle_insumos"]:
+                    nombre = item["Insumo"]
+                    cantidad = item["Cantidad"]
+                    unidad = item["Unidad"]
+                    if nombre.startswith("TELA 1:"):
+                        suf = f" [{tela1_modo}]" if tela1_modo else ""
+                        bullets.append(f"- **{nombre}**{suf} — {cantidad} {unidad}")
+                    elif nombre.startswith("TELA 2:"):
+                        suf = f" [{tela2_modo}]" if tela2_modo else ""
+                        bullets.append(f"- **{nombre}**{suf} — {cantidad} {unidad}")
+                    else:
+                        bullets.append(f"- **{nombre}** — {cantidad} {unidad}")
+                c2.markdown(f"**{cortina['diseno']}**\n\n" + ("\n".join(bullets) if bullets else ""))
+                # Columna 3: dimensiones y cantidad
+                c3.write(f"Dimensiones: {cortina['ancho'] * cortina['multiplicador']:.2f} × {cortina['alto']:.2f} m  •  Cant: {cortina['cantidad']}")
+                # Columna 4: precio
                 c4.markdown(f"**{money(cortina['total'])}**")
 
     total_final = sum(c['total'] for c in st.session_state.cortinas_resumen)
